@@ -12,6 +12,8 @@ from PyQt5 import QtWidgets, QtCore, QtGui
 # 导入音频分析模块
 from audio.analyzer import AudioAnalyzer
 from audio.visualizer import AudioVisualizer
+# 导入谱面分析模块
+from beatmap.analyzer import BeatmapAnalyzer
 
 
 class OsuStyleMainWindow(QtWidgets.QMainWindow):
@@ -28,10 +30,18 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
         # 初始化音频分析器
         self.audio_analyzer = AudioAnalyzer()
         
+        # 初始化谱面分析器
+        self.beatmap_analyzer = BeatmapAnalyzer()
+        
         # 连接信号
         self.audio_analyzer.analysis_progress.connect(self.update_analysis_progress)
         self.audio_analyzer.analysis_complete.connect(self.handle_analysis_complete)
         self.audio_analyzer.analysis_error.connect(self.handle_analysis_error)
+        
+        # 连接谱面分析器信号
+        self.beatmap_analyzer.analysis_progress.connect(self.update_beatmap_analysis_progress)
+        self.beatmap_analyzer.analysis_complete.connect(self.handle_beatmap_analysis_complete)
+        self.beatmap_analyzer.analysis_error.connect(self.handle_beatmap_analysis_error)
         
         # 初始化UI
         self.init_ui()
@@ -172,6 +182,10 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
         # 创建"生成谱面"选项卡
         generate_tab = QtWidgets.QWidget()
         tab_widget.addTab(generate_tab, "生成谱面")
+        
+        # 创建"谱面分析"选项卡
+        beatmap_analysis_tab = QtWidgets.QWidget()
+        tab_widget.addTab(beatmap_analysis_tab, "谱面分析")
         
         # 创建"谱面预览"选项卡
         preview_tab = QtWidgets.QWidget()
@@ -335,6 +349,105 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
         status_layout.addWidget(self.status_label)
         
         generate_layout.addLayout(status_layout)
+        
+        # 设置"谱面分析"选项卡的布局
+        beatmap_analysis_layout = QtWidgets.QVBoxLayout(beatmap_analysis_tab)
+        beatmap_analysis_layout.setSpacing(15)
+        
+        # 谱面文件选择部分
+        beatmap_file_group = QtWidgets.QGroupBox("谱面文件")
+        beatmap_file_layout = QtWidgets.QHBoxLayout(beatmap_file_group)
+        
+        self.beatmap_file_path = QtWidgets.QLineEdit()
+        self.beatmap_file_path.setPlaceholderText("请选择.osu谱面文件...")
+        
+        browse_beatmap_btn = QtWidgets.QPushButton("浏览")
+        try:
+            browse_beatmap_btn.setIcon(QtGui.QIcon("gui/resources/folder_icon.png"))
+        except:
+            pass  # 如果图标不存在，则不设置图标
+        browse_beatmap_btn.clicked.connect(self.browse_beatmap)
+        
+        beatmap_file_layout.addWidget(self.beatmap_file_path, 3)
+        beatmap_file_layout.addWidget(browse_beatmap_btn, 1)
+        
+        beatmap_analysis_layout.addWidget(beatmap_file_group)
+        
+        # 谱面分析操作按钮区域
+        beatmap_actions_layout = QtWidgets.QHBoxLayout()
+        
+        self.beatmap_progress_bar = QtWidgets.QProgressBar()
+        self.beatmap_progress_bar.setRange(0, 100)
+        self.beatmap_progress_bar.setValue(0)
+        
+        analyze_beatmap_btn = QtWidgets.QPushButton("分析谱面")
+        try:
+            analyze_beatmap_btn.setIcon(QtGui.QIcon("gui/resources/analyze_icon.png"))
+        except:
+            pass  # 如果图标不存在，则不设置图标
+        analyze_beatmap_btn.clicked.connect(self.analyze_beatmap)
+        
+        export_beatmap_analysis_btn = QtWidgets.QPushButton("导出分析")
+        try:
+            export_beatmap_analysis_btn.setIcon(QtGui.QIcon("gui/resources/export_icon.png"))
+        except:
+            pass  # 如果图标不存在，则不设置图标
+        export_beatmap_analysis_btn.clicked.connect(self.export_beatmap_analysis)
+        
+        beatmap_actions_layout.addWidget(self.beatmap_progress_bar, 3)
+        beatmap_actions_layout.addWidget(analyze_beatmap_btn, 1)
+        beatmap_actions_layout.addWidget(export_beatmap_analysis_btn, 1)
+        
+        beatmap_analysis_layout.addLayout(beatmap_actions_layout)
+        
+        # 结果显示区域 - 选项卡
+        beatmap_results_tabs = QtWidgets.QTabWidget()
+        beatmap_analysis_layout.addWidget(beatmap_results_tabs)
+        
+        # 谱面概要选项卡
+        summary_tab = QtWidgets.QWidget()
+        summary_layout = QtWidgets.QVBoxLayout(summary_tab)
+        self.beatmap_summary_text = QtWidgets.QTextEdit()
+        self.beatmap_summary_text.setReadOnly(True)
+        summary_layout.addWidget(self.beatmap_summary_text)
+        beatmap_results_tabs.addTab(summary_tab, "谱面概要")
+        
+        # 难度分析选项卡
+        difficulty_tab = QtWidgets.QWidget()
+        difficulty_layout = QtWidgets.QVBoxLayout(difficulty_tab)
+        self.difficulty_analysis_text = QtWidgets.QTextEdit()
+        self.difficulty_analysis_text.setReadOnly(True)
+        difficulty_layout.addWidget(self.difficulty_analysis_text)
+        beatmap_results_tabs.addTab(difficulty_tab, "难度分析")
+        
+        # 物件分布选项卡
+        distribution_tab = QtWidgets.QWidget()
+        distribution_layout = QtWidgets.QVBoxLayout(distribution_tab)
+        self.distribution_widget = QtWidgets.QWidget()
+        distribution_layout.addWidget(self.distribution_widget)
+        beatmap_results_tabs.addTab(distribution_tab, "物件分布")
+        
+        # 热图选项卡
+        heatmap_tab = QtWidgets.QWidget()
+        heatmap_layout = QtWidgets.QVBoxLayout(heatmap_tab)
+        self.heatmap_widget = QtWidgets.QWidget()
+        heatmap_layout.addWidget(self.heatmap_widget)
+        beatmap_results_tabs.addTab(heatmap_tab, "热图分析")
+        
+        # 模式识别选项卡
+        pattern_tab = QtWidgets.QWidget()
+        pattern_layout = QtWidgets.QVBoxLayout(pattern_tab)
+        self.pattern_analysis_text = QtWidgets.QTextEdit()
+        self.pattern_analysis_text.setReadOnly(True)
+        pattern_layout.addWidget(self.pattern_analysis_text)
+        beatmap_results_tabs.addTab(pattern_tab, "模式识别")
+        
+        # 状态区域
+        beatmap_status_layout = QtWidgets.QHBoxLayout()
+        self.beatmap_status_label = QtWidgets.QLabel("请选择要分析的谱面文件")
+        self.beatmap_status_label.setStyleSheet("color: #666666;")
+        beatmap_status_layout.addWidget(self.beatmap_status_label)
+        beatmap_analysis_layout.addLayout(beatmap_status_layout)
         
         # 设置预览选项卡内容
         preview_layout = QtWidgets.QVBoxLayout(preview_tab)
@@ -822,6 +935,375 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
         # 如果禁用可视化，则不再将分析结果传递给可视化器以节省资源
         if not is_enabled and hasattr(self.audio_analyzer, 'features'):
             self.status_label.setText("可视化已禁用，但分析结果仍然可用")
+
+    def browse_beatmap(self):
+        """浏览选择谱面文件"""
+        file_path, _ = QtWidgets.QFileDialog.getOpenFileName(
+            self, "选择谱面文件", "", "osu谱面文件 (*.osu)"
+        )
+        if file_path:
+            self.beatmap_file_path.setText(file_path)
+            self.beatmap_status_label.setText(f"已选择谱面文件: {os.path.basename(file_path)}")
+
+    def analyze_beatmap(self):
+        """分析谱面文件"""
+        beatmap_file = self.beatmap_file_path.text()
+        if not beatmap_file or not os.path.exists(beatmap_file):
+            QtWidgets.QMessageBox.warning(self, "警告", "请先选择有效的谱面文件")
+            return
+        
+        # 清除之前的分析结果
+        self.clear_beatmap_analysis_results()
+        
+        # 更新状态和进度条
+        self.beatmap_status_label.setText("正在分析谱面...")
+        self.beatmap_progress_bar.setValue(0)
+        
+        # 加载谱面文件
+        if not self.beatmap_analyzer.load_beatmap(beatmap_file):
+            self.beatmap_status_label.setText("谱面文件加载失败")
+            return
+        
+        # 开始分析
+        self.beatmap_analyzer.analyze()
+
+    def update_beatmap_analysis_progress(self, progress):
+        """更新谱面分析进度"""
+        self.beatmap_progress_bar.setValue(progress)
+
+    def handle_beatmap_analysis_complete(self, results):
+        """处理谱面分析完成事件"""
+        self.beatmap_status_label.setText("谱面分析完成")
+        self.beatmap_progress_bar.setValue(100)
+        
+        # 显示分析结果
+        self.display_beatmap_analysis_results(results)
+
+    def handle_beatmap_analysis_error(self, error_message):
+        """处理谱面分析错误事件"""
+        self.beatmap_status_label.setText(f"谱面分析出错: {error_message}")
+        QtWidgets.QMessageBox.critical(self, "分析错误", f"谱面分析过程中出错: {error_message}")
+
+    def clear_beatmap_analysis_results(self):
+        """清除谱面分析结果"""
+        self.beatmap_summary_text.clear()
+        self.difficulty_analysis_text.clear()
+        self.pattern_analysis_text.clear()
+        
+        # 清除图表小部件
+        if hasattr(self, 'distribution_plot'):
+            self.distribution_plot.setParent(None)
+        if hasattr(self, 'heatmap_plot'):
+            self.heatmap_plot.setParent(None)
+
+    def display_beatmap_analysis_results(self, results):
+        """显示谱面分析结果"""
+        # 更新谱面概要
+        self.beatmap_summary_text.setText(self.beatmap_analyzer.get_difficulty_summary())
+        
+        # 更新难度分析
+        if "difficulty" in results and "difficulty_rating" in results:
+            difficulty = results["difficulty"]
+            rating = results["difficulty_rating"]
+            
+            difficulty_text = f"""## 难度详细分析
+
+### 参数值
+- 接近速度(AR): {difficulty.get('AR', 0):.1f}
+- 判定精度(OD): {difficulty.get('OD', 0):.1f}
+- 圆圈大小(CS): {difficulty.get('CS', 0):.1f}
+- 生命消耗(HP): {difficulty.get('HP', 0):.1f}
+- 滑条速度: {difficulty.get('slider_multiplier', 0):.2f}x
+- 滑条点击率: {difficulty.get('slider_tick_rate', 0):.1f}
+
+### 难度评级
+- 综合难度: {rating.get('overall_level', '未知')}
+- 数值评分: {rating.get('numerical_rating', 0):.2f}/10
+- AR评级: {rating.get('ar_rating', '未知')}
+- OD评级: {rating.get('od_rating', '未知')}
+- CS评级: {rating.get('cs_rating', '未知')}
+- HP评级: {rating.get('hp_rating', '未知')}
+"""
+            self.difficulty_analysis_text.setText(difficulty_text)
+        
+        # 更新物件分布图
+        if "distribution" in results:
+            # 创建时间间隔分布图
+            from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
+            
+            distribution_fig = self.beatmap_analyzer.generate_timing_distribution()
+            if distribution_fig:
+                self.distribution_plot = FigureCanvas(distribution_fig)
+                layout = self.distribution_widget.layout()
+                if layout:
+                    # 清除旧的小部件
+                    while layout.count():
+                        item = layout.takeAt(0)
+                        widget = item.widget()
+                        if widget:
+                            widget.deleteLater()
+                else:
+                    layout = QtWidgets.QVBoxLayout(self.distribution_widget)
+                
+                layout.addWidget(self.distribution_plot)
+        
+        # 更新热图
+        if "heatmap" in results:
+            from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
+            
+            heatmap_fig = self.beatmap_analyzer.generate_heatmap()
+            if heatmap_fig:
+                self.heatmap_plot = FigureCanvas(heatmap_fig)
+                layout = self.heatmap_widget.layout()
+                if layout:
+                    # 清除旧的小部件
+                    while layout.count():
+                        item = layout.takeAt(0)
+                        widget = item.widget()
+                        if widget:
+                            widget.deleteLater()
+                else:
+                    layout = QtWidgets.QVBoxLayout(self.heatmap_widget)
+                
+                layout.addWidget(self.heatmap_plot)
+        
+        # 更新模式识别
+        if "patterns" in results:
+            patterns = results["patterns"]
+            counts = patterns.get("counts", {})
+            percentages = patterns.get("percentage", {})
+            
+            pattern_text = "## 谱面模式分析\n\n"
+            pattern_text += f"主要模式: {patterns.get('primary_pattern', '未知')}\n\n"
+            pattern_text += "### 模式统计\n"
+            
+            for pattern, count in counts.items():
+                percentage = percentages.get(pattern, 0)
+                pattern_text += f"- {pattern}: {count} 次 ({percentage:.1f}%)\n"
+            
+            if "rhythm" in results:
+                rhythm = results["rhythm"]
+                pattern_text += f"\n### 节奏分析\n"
+                pattern_text += f"- BPM: {rhythm.get('bpm', 0):.1f}\n"
+                pattern_text += f"- 每秒物件数: {rhythm.get('objects_per_second', 0):.2f}\n"
+                pattern_text += f"- 每拍物件数: {rhythm.get('objects_per_beat', 0):.2f}\n"
+                pattern_text += f"- 密度级别: {rhythm.get('density_level', '未知')}\n"
+                pattern_text += f"- 连打段落数: {rhythm.get('stream_sections_count', 0)}\n"
+            
+            self.pattern_analysis_text.setText(pattern_text)
+
+    def export_beatmap_analysis(self):
+        """导出谱面分析结果"""
+        if not hasattr(self.beatmap_analyzer, 'analysis_results') or not self.beatmap_analyzer.analysis_results:
+            QtWidgets.QMessageBox.warning(self, "警告", "没有可导出的谱面分析结果")
+            return
+        
+        # 选择保存路径
+        save_path, _ = QtWidgets.QFileDialog.getSaveFileName(
+            self, "导出谱面分析", "", "JSON文件 (*.json);;HTML报告 (*.html);;文本文件 (*.txt)"
+        )
+        
+        if not save_path:
+            return
+        
+        try:
+            # 根据文件扩展名选择导出格式
+            _, ext = os.path.splitext(save_path)
+            
+            if ext.lower() == '.json':
+                # 导出为JSON
+                import json
+                # 判断是否使用美化格式
+                indent = 4 if hasattr(self, 'json_pretty_rb') and self.json_pretty_rb.isChecked() else None
+                
+                with open(save_path, 'w', encoding='utf-8') as f:
+                    json.dump(self.beatmap_analyzer.analysis_results, f, ensure_ascii=False, indent=indent)
+                    
+            elif ext.lower() == '.html':
+                # 导出为HTML报告
+                self.export_beatmap_analysis_as_html(save_path)
+                    
+            elif ext.lower() == '.txt':
+                # 导出为文本文件
+                with open(save_path, 'w', encoding='utf-8') as f:
+                    f.write(self.beatmap_analyzer.get_difficulty_summary())
+                    
+            self.beatmap_status_label.setText(f"分析结果已导出到: {save_path}")
+            
+        except Exception as e:
+            QtWidgets.QMessageBox.critical(self, "导出错误", f"导出分析结果时出错: {str(e)}")
+
+    def export_beatmap_analysis_as_html(self, save_path):
+        """将谱面分析结果导出为HTML报告"""
+        try:
+            # 导出热图和分布图
+            from matplotlib.backends.backend_agg import FigureCanvasAgg as FigureCanvas
+            import base64
+            from io import BytesIO
+            
+            results = self.beatmap_analyzer.analysis_results
+            
+            # 将图像转换为base64嵌入HTML
+            def fig_to_base64(fig):
+                buf = BytesIO()
+                canvas = FigureCanvas(fig)
+                fig.savefig(buf, format='png')
+                buf.seek(0)
+                img_base64 = base64.b64encode(buf.read()).decode('utf-8')
+                buf.close()
+                return img_base64
+            
+            heatmap_base64 = ""
+            distribution_base64 = ""
+            
+            # 生成热图的base64
+            heatmap_fig = self.beatmap_analyzer.generate_heatmap()
+            if heatmap_fig:
+                heatmap_base64 = fig_to_base64(heatmap_fig)
+                
+            # 生成分布图的base64
+            distribution_fig = self.beatmap_analyzer.generate_timing_distribution()
+            if distribution_fig:
+                distribution_base64 = fig_to_base64(distribution_fig)
+            
+            # 元数据
+            metadata = results.get("metadata", {})
+            title = metadata.get("title", "未知谱面")
+            artist = metadata.get("artist", "未知艺术家")
+            creator = metadata.get("creator", "未知作者")
+            version = metadata.get("version", "")
+            
+            # 难度
+            difficulty = results.get("difficulty", {})
+            rating = results.get("difficulty_rating", {})
+            
+            # 物件计数
+            objects_count = results.get("objects_count", {})
+            
+            # 生成HTML
+            html = f"""<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>谱面分析: {title} [{version}]</title>
+    <style>
+        body {{ font-family: Arial, sans-serif; margin: 0; padding: 20px; background-color: #f5f5f5; }}
+        .container {{ max-width: 1200px; margin: 0 auto; background-color: white; padding: 20px; border-radius: 10px; box-shadow: 0 0 10px rgba(0,0,0,0.1); }}
+        .header {{ text-align: center; margin-bottom: 30px; border-bottom: 2px solid #FF66AA; padding-bottom: 20px; }}
+        .section {{ margin-bottom: 30px; }}
+        h1, h2, h3 {{ color: #FF66AA; }}
+        h1 {{ font-size: 24px; }}
+        h2 {{ font-size: 20px; }}
+        table {{ width: 100%; border-collapse: collapse; margin-bottom: 20px; }}
+        th, td {{ padding: 10px; text-align: left; border-bottom: 1px solid #ddd; }}
+        th {{ background-color: #f2f2f2; }}
+        .chart-container {{ display: flex; justify-content: center; margin: 20px 0; }}
+        .chart {{ max-width: 100%; height: auto; }}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>osu!谱面分析报告</h1>
+            <h2>{title} [{version}]</h2>
+            <p>艺术家: {artist} | 谱师: {creator}</p>
+        </div>
+        
+        <div class="section">
+            <h2>谱面概要</h2>
+            <table>
+                <tr><th>难度等级</th><td>{rating.get('overall_level', '未知')}</td></tr>
+                <tr><th>难度评分</th><td>{rating.get('numerical_rating', 0):.2f}/10</td></tr>
+                <tr><th>物件总数</th><td>{objects_count.get('total', 0)}</td></tr>
+                <tr><th>圆圈数</th><td>{objects_count.get('circles', 0)} ({objects_count.get('circles', 0)/max(1, objects_count.get('total', 1))*100:.1f}%)</td></tr>
+                <tr><th>滑条数</th><td>{objects_count.get('sliders', 0)} ({objects_count.get('sliders', 0)/max(1, objects_count.get('total', 1))*100:.1f}%)</td></tr>
+                <tr><th>转盘数</th><td>{objects_count.get('spinners', 0)} ({objects_count.get('spinners', 0)/max(1, objects_count.get('total', 1))*100:.1f}%)</td></tr>
+            </table>
+        </div>
+        
+        <div class="section">
+            <h2>难度参数</h2>
+            <table>
+                <tr><th>参数</th><th>数值</th><th>评级</th></tr>
+                <tr><td>接近速度(AR)</td><td>{difficulty.get('AR', 0):.1f}</td><td>{rating.get('ar_rating', '未知')}</td></tr>
+                <tr><td>判定精度(OD)</td><td>{difficulty.get('OD', 0):.1f}</td><td>{rating.get('od_rating', '未知')}</td></tr>
+                <tr><td>圆圈大小(CS)</td><td>{difficulty.get('CS', 0):.1f}</td><td>{rating.get('cs_rating', '未知')}</td></tr>
+                <tr><td>生命消耗(HP)</td><td>{difficulty.get('HP', 0):.1f}</td><td>{rating.get('hp_rating', '未知')}</td></tr>
+                <tr><td>滑条速度</td><td>{difficulty.get('slider_multiplier', 0):.2f}x</td><td>-</td></tr>
+                <tr><td>滑条点击率</td><td>{difficulty.get('slider_tick_rate', 0):.1f}</td><td>-</td></tr>
+            </table>
+        </div>
+"""
+            
+            # 添加热图和分布图（如果有）
+            if heatmap_base64:
+                html += f"""
+        <div class="section">
+            <h2>物件分布热图</h2>
+            <div class="chart-container">
+                <img class="chart" src="data:image/png;base64,{heatmap_base64}" alt="物件分布热图">
+            </div>
+        </div>
+"""
+            
+            if distribution_base64:
+                html += f"""
+        <div class="section">
+            <h2>时间间隔分布</h2>
+            <div class="chart-container">
+                <img class="chart" src="data:image/png;base64,{distribution_base64}" alt="时间间隔分布">
+            </div>
+        </div>
+"""
+            
+            # 添加节奏分析部分
+            if "rhythm" in results:
+                rhythm = results.get("rhythm", {})
+                html += f"""
+        <div class="section">
+            <h2>节奏分析</h2>
+            <table>
+                <tr><th>BPM</th><td>{rhythm.get('bpm', 0):.1f}</td></tr>
+                <tr><th>密度等级</th><td>{rhythm.get('density_level', '未知')}</td></tr>
+                <tr><th>每秒物件数</th><td>{rhythm.get('objects_per_second', 0):.2f}</td></tr>
+                <tr><th>每拍物件数</th><td>{rhythm.get('objects_per_beat', 0):.2f}</td></tr>
+                <tr><th>连打段落数</th><td>{rhythm.get('stream_sections_count', 0)}</td></tr>
+            </table>
+        </div>
+"""
+            
+            # 添加模式分析部分
+            if "patterns" in results:
+                patterns = results.get("patterns", {})
+                counts = patterns.get("counts", {})
+                percentages = patterns.get("percentage", {})
+                
+                html += f"""
+        <div class="section">
+            <h2>模式分析</h2>
+            <p>主要模式: <strong>{patterns.get('primary_pattern', '未知')}</strong></p>
+            <table>
+                <tr><th>模式</th><th>计数</th><th>占比</th></tr>
+"""
+                
+                for pattern, count in counts.items():
+                    percentage = percentages.get(pattern, 0)
+                    html += f"                <tr><td>{pattern}</td><td>{count}</td><td>{percentage:.1f}%</td></tr>\n"
+                
+                html += "            </table>\n        </div>\n"
+            
+            # 结束HTML
+            html += """
+    </div>
+</body>
+</html>
+"""
+            
+            with open(save_path, 'w', encoding='utf-8') as f:
+                f.write(html)
+            
+        except Exception as e:
+            raise Exception(f"生成HTML报告时出错: {str(e)}")
 
 
 def main():
