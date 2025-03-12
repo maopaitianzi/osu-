@@ -306,7 +306,7 @@ class AudioVisualizer(QtWidgets.QWidget):
         power_db = librosa.amplitude_to_db(magnitude, ref=np.max)
         
         # 绘制频谱图
-        librosa.display.specshow(
+        img = librosa.display.specshow(
             power_db, 
             sr=sr, 
             x_axis='time', 
@@ -320,14 +320,24 @@ class AudioVisualizer(QtWidgets.QWidget):
         self.canvas.axes.set_xlabel("时间 (秒)", fontsize=12, color='white')
         self.canvas.axes.set_ylabel("频率 (Hz)", fontsize=12, color='white')
         
-        # 添加颜色条
-        cbar = self.canvas.fig.colorbar(
-            self.canvas.axes.images[0], 
-            ax=self.canvas.axes,
-            format="%+2.0f dB"
-        )
-        cbar.ax.yaxis.set_tick_params(color='white')
-        cbar.ax.yaxis.label.set_color('white')
+        # 添加颜色条 - 检查images列表是否为空
+        if len(self.canvas.axes.images) > 0:
+            cbar = self.canvas.fig.colorbar(
+                self.canvas.axes.images[0], 
+                ax=self.canvas.axes,
+                format="%+2.0f dB"
+            )
+            cbar.ax.yaxis.set_tick_params(color='white')
+            cbar.ax.yaxis.label.set_color('white')
+        else:
+            # 使用刚刚创建的img对象作为替代
+            cbar = self.canvas.fig.colorbar(
+                img, 
+                ax=self.canvas.axes,
+                format="%+2.0f dB"
+            )
+            cbar.ax.yaxis.set_tick_params(color='white')
+            cbar.ax.yaxis.label.set_color('white')
         
         # 绘制节拍线
         if self.show_beats_cb.isChecked() and self.audio_features and "beat_times" in self.audio_features:
@@ -341,6 +351,9 @@ class AudioVisualizer(QtWidgets.QWidget):
     
     def _draw_mel_spectrogram(self):
         """绘制梅尔频谱图"""
+        # 在方法开头导入librosa，确保所有代码路径都能访问到它
+        import librosa
+        
         if self.audio_features and "visualization" in self.audio_features and "mel_spec_db" in self.audio_features["visualization"]:
             # 使用预计算的梅尔频谱
             mel_spec_db = np.array(self.audio_features["visualization"]["mel_spec_db"])
@@ -354,8 +367,6 @@ class AudioVisualizer(QtWidgets.QWidget):
             )
         elif self.audio_data is not None:
             # 实时计算梅尔频谱
-            import librosa
-            
             y = self.audio_data["y"]
             sr = self.audio_data["sr"]
             
@@ -380,11 +391,14 @@ class AudioVisualizer(QtWidgets.QWidget):
         self.canvas.axes.set_ylabel("梅尔频率", fontsize=12, color='white')
         
         # 添加颜色条
-        cbar = self.canvas.fig.colorbar(
-            self.canvas.axes.images[0], 
-            ax=self.canvas.axes,
-            format="%+2.0f dB"
-        )
+        if len(self.canvas.axes.images) > 0:
+            cbar = self.canvas.fig.colorbar(
+                self.canvas.axes.images[0], 
+                ax=self.canvas.axes,
+                format="%+2.0f dB"
+            )
+            cbar.ax.yaxis.set_tick_params(color='white')
+            cbar.ax.yaxis.label.set_color('white')
         
         # 绘制节拍线
         if self.show_beats_cb.isChecked() and self.audio_features and "beat_times" in self.audio_features:
@@ -398,6 +412,9 @@ class AudioVisualizer(QtWidgets.QWidget):
     
     def _draw_chroma(self):
         """绘制色度图"""
+        # 在方法开头导入librosa，确保所有代码路径都能访问到它
+        import librosa
+        
         if self.audio_features and "visualization" in self.audio_features and "chroma" in self.audio_features["visualization"]:
             # 使用预计算的色度图
             chroma = np.array(self.audio_features["visualization"]["chroma"])
@@ -411,8 +428,6 @@ class AudioVisualizer(QtWidgets.QWidget):
             )
         elif self.audio_data is not None:
             # 实时计算色度图
-            import librosa
-            
             y = self.audio_data["y"]
             sr = self.audio_data["sr"]
             
@@ -449,6 +464,9 @@ class AudioVisualizer(QtWidgets.QWidget):
     
     def _draw_volume(self):
         """绘制音量/能量变化图"""
+        # 在方法开头导入librosa，确保所有代码路径都能访问到它
+        import librosa
+        
         if self.audio_features and "volume" in self.audio_features:
             volume_data = self.audio_features["volume"]
             times = volume_data["times"]
@@ -477,8 +495,6 @@ class AudioVisualizer(QtWidgets.QWidget):
                         )
         elif self.audio_data is not None:
             # 实时计算音量
-            import librosa
-            
             y = self.audio_data["y"]
             sr = self.audio_data["sr"]
             
