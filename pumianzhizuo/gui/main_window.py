@@ -41,16 +41,16 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
         # 设置应用样式
         self.setStyleSheet("""
             QMainWindow {
-                background-color: #1A1A1A;
-                color: #FFFFFF;
+                background-color: #FFFFFF;
+                color: #000000;
             }
             QGroupBox {
-                background-color: #282828;
+                background-color: #F0F0F0;
                 border: 2px solid #FF66AA;
                 border-radius: 5px;
                 margin-top: 1ex;
                 font-weight: bold;
-                color: #FFFFFF;
+                color: #000000;
             }
             QGroupBox::title {
                 subcontrol-origin: margin;
@@ -75,15 +75,15 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
                 background-color: #CC5588;
             }
             QLabel {
-                color: #FFFFFF;
+                color: #000000;
                 font-size: 14px;
             }
             QLineEdit, QComboBox {
-                background-color: #333333;
-                border: 1px solid #555555;
+                background-color: #FFFFFF;
+                border: 1px solid #CCCCCC;
                 border-radius: 3px;
                 padding: 5px;
-                color: #FFFFFF;
+                color: #000000;
             }
             QComboBox::drop-down {
                 border: none;
@@ -97,7 +97,7 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
             QTabWidget::pane {
                 border: 2px solid #FF66AA;
                 border-radius: 5px;
-                background-color: #282828;
+                background-color: #F0F0F0;
             }
             QTabBar::tab {
                 background-color: #333333;
@@ -114,9 +114,9 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
                 background-color: #444444;
             }
             QSlider::groove:horizontal {
-                border: 1px solid #999999;
+                border: 1px solid #CCCCCC;
                 height: 8px;
-                background: #333333;
+                background: #F0F0F0;
                 margin: 2px 0;
                 border-radius: 4px;
             }
@@ -131,10 +131,10 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
                 background: #FF99CC;
             }
             QProgressBar {
-                border: 1px solid #555555;
+                border: 1px solid #CCCCCC;
                 border-radius: 5px;
-                background-color: #333333;
-                color: white;
+                background-color: #F0F0F0;
+                color: #000000;
                 text-align: center;
             }
             QProgressBar::chunk {
@@ -330,7 +330,7 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
         status_layout = QtWidgets.QHBoxLayout()
         
         self.status_label = QtWidgets.QLabel("准备就绪")
-        self.status_label.setStyleSheet("color: #AAAAAA;")
+        self.status_label.setStyleSheet("color: #666666;")
         
         status_layout.addWidget(self.status_label)
         
@@ -349,7 +349,7 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
         self.visualization_disabled_label.setAlignment(QtCore.Qt.AlignCenter)
         self.visualization_disabled_label.setStyleSheet("""
             font-size: 16px;
-            color: #AAAAAA;
+            color: #666666;
             margin: 50px;
         """)
         preview_layout.addWidget(self.visualization_disabled_label)
