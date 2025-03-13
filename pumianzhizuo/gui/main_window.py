@@ -7,6 +7,7 @@ osu!风格的谱面生成器主窗口
 
 import os
 import sys
+import json
 from PyQt5 import QtWidgets, QtCore, QtGui
 
 # 导入音频分析模块
@@ -193,6 +194,10 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
         # 创建"谱面预览"选项卡
         preview_tab = QtWidgets.QWidget()
         tab_widget.addTab(preview_tab, "谱面预览")
+        
+        # 创建"数据集处理"选项卡
+        dataset_tab = QtWidgets.QWidget()
+        tab_widget.addTab(dataset_tab, "数据集处理")
         
         # 创建"设置"选项卡
         settings_tab = QtWidgets.QWidget()
@@ -498,6 +503,117 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
         preview_controls_layout.addWidget(self.playback_slider, 2)
         
         preview_layout.addLayout(preview_controls_layout)
+        
+        # 设置数据集处理选项卡内容
+        dataset_layout = QtWidgets.QVBoxLayout(dataset_tab)
+        
+        # 文件夹选择部分
+        dataset_folder_group = QtWidgets.QGroupBox("谱面文件夹")
+        dataset_folder_layout = QtWidgets.QHBoxLayout(dataset_folder_group)
+        
+        self.dataset_folder_path = QtWidgets.QLineEdit()
+        self.dataset_folder_path.setPlaceholderText("请选择包含谱面文件的文件夹...")
+        
+        browse_dataset_btn = QtWidgets.QPushButton("浏览")
+        try:
+            browse_dataset_btn.setIcon(QtGui.QIcon("gui/resources/folder_icon.png"))
+        except:
+            pass
+        browse_dataset_btn.clicked.connect(self.browse_dataset_folder)
+        
+        dataset_folder_layout.addWidget(self.dataset_folder_path, 3)
+        dataset_folder_layout.addWidget(browse_dataset_btn, 1)
+        
+        dataset_layout.addWidget(dataset_folder_group)
+        
+        # 数据集参数设置
+        dataset_params_group = QtWidgets.QGroupBox("数据集参数")
+        dataset_params_layout = QtWidgets.QGridLayout(dataset_params_group)
+        
+        # 模式选择
+        mode_label = QtWidgets.QLabel("游戏模式:")
+        self.mode_combo = QtWidgets.QComboBox()
+        self.mode_combo.addItems(["std", "taiko", "catch", "mania"])
+        dataset_params_layout.addWidget(mode_label, 0, 0)
+        dataset_params_layout.addWidget(self.mode_combo, 0, 1)
+        
+        # 难度选择
+        difficulty_label = QtWidgets.QLabel("难度选择:")
+        self.difficulty_combo = QtWidgets.QComboBox()
+        self.difficulty_combo.addItems(["所有难度", "Easy", "Normal", "Hard", "Insane", "Expert", "Expert+"])
+        dataset_params_layout.addWidget(difficulty_label, 1, 0)
+        dataset_params_layout.addWidget(self.difficulty_combo, 1, 1)
+        
+        # 文件数量限制
+        files_limit_label = QtWidgets.QLabel("文件数量限制:")
+        self.files_limit_spin = QtWidgets.QSpinBox()
+        self.files_limit_spin.setRange(1, 10000)
+        self.files_limit_spin.setValue(100)
+        dataset_params_layout.addWidget(files_limit_label, 2, 0)
+        dataset_params_layout.addWidget(self.files_limit_spin, 2, 1)
+        
+        # 输出文件夹设置
+        output_folder_label = QtWidgets.QLabel("输出文件夹:")
+        self.dataset_output_path = QtWidgets.QLineEdit()
+        self.dataset_output_path.setPlaceholderText("请选择数据集输出文件夹...")
+        
+        browse_output_btn = QtWidgets.QPushButton("浏览")
+        try:
+            browse_output_btn.setIcon(QtGui.QIcon("gui/resources/folder_icon.png"))
+        except:
+            pass
+        browse_output_btn.clicked.connect(self.browse_dataset_output)
+        
+        output_folder_layout = QtWidgets.QHBoxLayout()
+        output_folder_layout.addWidget(self.dataset_output_path, 3)
+        output_folder_layout.addWidget(browse_output_btn, 1)
+        
+        dataset_params_layout.addWidget(output_folder_label, 3, 0)
+        dataset_params_layout.addLayout(output_folder_layout, 3, 1)
+        
+        dataset_layout.addWidget(dataset_params_group)
+        
+        # 扫描与处理按钮
+        dataset_actions_group = QtWidgets.QGroupBox("处理操作")
+        dataset_actions_layout = QtWidgets.QVBoxLayout(dataset_actions_group)
+        
+        # 处理进度条
+        self.dataset_progress_bar = QtWidgets.QProgressBar()
+        self.dataset_progress_bar.setRange(0, 100)
+        self.dataset_progress_bar.setValue(0)
+        
+        # 操作按钮布局
+        dataset_buttons_layout = QtWidgets.QHBoxLayout()
+        
+        scan_btn = QtWidgets.QPushButton("扫描文件夹")
+        scan_btn.clicked.connect(self.scan_dataset_folder)
+        
+        process_btn = QtWidgets.QPushButton("处理数据集")
+        process_btn.clicked.connect(self.process_dataset)
+        
+        export_btn = QtWidgets.QPushButton("导出数据集")
+        export_btn.clicked.connect(self.export_dataset)
+        
+        dataset_buttons_layout.addWidget(scan_btn)
+        dataset_buttons_layout.addWidget(process_btn)
+        dataset_buttons_layout.addWidget(export_btn)
+        
+        dataset_actions_layout.addWidget(self.dataset_progress_bar)
+        dataset_actions_layout.addLayout(dataset_buttons_layout)
+        
+        dataset_layout.addWidget(dataset_actions_group)
+        
+        # 扫描结果显示区域
+        dataset_results_group = QtWidgets.QGroupBox("扫描结果")
+        dataset_results_layout = QtWidgets.QVBoxLayout(dataset_results_group)
+        
+        self.dataset_files_list = QtWidgets.QListWidget()
+        self.dataset_status_label = QtWidgets.QLabel("请选择要扫描的谱面文件夹")
+        
+        dataset_results_layout.addWidget(self.dataset_files_list)
+        dataset_results_layout.addWidget(self.dataset_status_label)
+        
+        dataset_layout.addWidget(dataset_results_group)
         
         # 设置设置选项卡内容
         settings_layout = QtWidgets.QVBoxLayout(settings_tab)
@@ -1398,6 +1514,294 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
             
         except Exception as e:
             raise Exception(f"生成HTML报告时出错: {str(e)}")
+
+    def browse_dataset_folder(self):
+        """浏览数据集文件夹"""
+        folder_path = QtWidgets.QFileDialog.getExistingDirectory(
+            self, "选择谱面文件夹", os.path.expanduser("~")
+        )
+        if folder_path:
+            self.dataset_folder_path.setText(folder_path)
+            self.dataset_status_label.setText(f"已选择文件夹: {folder_path}")
+    
+    def browse_dataset_output(self):
+        """浏览数据集输出文件夹"""
+        folder_path = QtWidgets.QFileDialog.getExistingDirectory(
+            self, "选择数据集输出文件夹", os.path.expanduser("~")
+        )
+        if folder_path:
+            self.dataset_output_path.setText(folder_path)
+    
+    def scan_dataset_folder(self):
+        """扫描数据集文件夹中的谱面文件"""
+        folder_path = self.dataset_folder_path.text().strip()
+        if not folder_path or not os.path.isdir(folder_path):
+            QtWidgets.QMessageBox.warning(self, "警告", "请先选择有效的谱面文件夹!")
+            return
+        
+        mode = self.mode_combo.currentText()
+        selected_difficulty = self.difficulty_combo.currentText()
+        limit = self.files_limit_spin.value()
+        
+        self.dataset_files_list.clear()
+        self.dataset_progress_bar.setValue(0)
+        self.dataset_status_label.setText("正在扫描文件夹...")
+        
+        # 开始扫描
+        found_files = []
+        total_scanned = 0
+        
+        # 难度范围映射
+        difficulty_ranges = {
+            "所有难度": (0, 10),
+            "Easy": (0, 2.5),
+            "Normal": (2.5, 4),
+            "Hard": (4, 5.5),
+            "Insane": (5.5, 7),
+            "Expert": (7, 8.5),
+            "Expert+": (8.5, 10)
+        }
+        
+        # 获取当前难度的范围
+        min_diff, max_diff = difficulty_ranges.get(selected_difficulty, (0, 10))
+        
+        # 递归扫描文件夹
+        for root, dirs, files in os.walk(folder_path):
+            for file in files:
+                if file.endswith(".osu"):
+                    total_scanned += 1
+                    file_path = os.path.join(root, file)
+                    
+                    # 简单检查文件内容以确定它是否符合要求
+                    try:
+                        with open(file_path, "r", encoding="utf-8") as f:
+                            content = f.read()
+                            
+                            # 检查模式
+                            mode_line = [line for line in content.split("\n") if "Mode:" in line]
+                            if mode_line:
+                                file_mode = mode_line[0].split(":")[-1].strip()
+                                if mode != "std" and mode != file_mode:
+                                    continue
+                            
+                            # 如果不是"所有难度"，则检查谱面难度是否在范围内
+                            if selected_difficulty != "所有难度":
+                                # 检查难度
+                                difficulty_lines = [
+                                    line for line in content.split("\n") 
+                                    if any(keyword in line for keyword in ["OverallDifficulty:", "HPDrainRate:", "CircleSize:", "ApproachRate:"])
+                                ]
+                                
+                                if difficulty_lines:
+                                    # 获取难度值
+                                    diff_values = []
+                                    for line in difficulty_lines:
+                                        try:
+                                            diff_value = float(line.split(":")[-1].strip())
+                                            diff_values.append(diff_value)
+                                        except:
+                                            pass
+                                    
+                                    # 如果有难度值，计算平均难度
+                                    if diff_values:
+                                        avg_difficulty = sum(diff_values) / len(diff_values)
+                                        if avg_difficulty < min_diff or avg_difficulty > max_diff:
+                                            continue
+                                
+                                # 另外尝试从谱面名称判断难度
+                                version_lines = [line for line in content.split("\n") if "Version:" in line]
+                                if version_lines:
+                                    version = version_lines[0].split(":")[-1].strip().lower()
+                                    
+                                    # 根据谱面名称匹配难度
+                                    difficulty_keywords = {
+                                        "easy": "Easy",
+                                        "normal": "Normal",
+                                        "hard": "Hard",
+                                        "insane": "Insane",
+                                        "expert": "Expert",
+                                        "extreme": "Expert+",
+                                        "extra": "Expert"
+                                    }
+                                    
+                                    # 检查谱面名称是否包含难度关键词
+                                    matched_difficulty = None
+                                    for keyword, diff in difficulty_keywords.items():
+                                        if keyword in version:
+                                            matched_difficulty = diff
+                                            break
+                                    
+                                    # 如果谱面名称匹配到难度关键词，但与选择的难度不匹配，则跳过
+                                    if matched_difficulty and matched_difficulty != selected_difficulty:
+                                        continue
+                            
+                            # 添加到发现的文件列表
+                            found_files.append(file_path)
+                            self.dataset_files_list.addItem(file_path)
+                            
+                            # 限制文件数量
+                            if len(found_files) >= limit:
+                                break
+                    except Exception as e:
+                        print(f"无法处理文件 {file_path}: {str(e)}")
+                
+                # 更新进度条
+                self.dataset_progress_bar.setValue(min(100, int(total_scanned / 1000 * 100)))
+                QtCore.QCoreApplication.processEvents()
+                
+                # 达到限制就停止
+                if len(found_files) >= limit:
+                    break
+            
+            # 达到限制就停止
+            if len(found_files) >= limit:
+                break
+        
+        # 更新状态
+        self.dataset_progress_bar.setValue(100)
+        self.dataset_status_label.setText(f"找到 {len(found_files)} 个符合条件的谱面文件")
+    
+    def process_dataset(self):
+        """处理数据集中的谱面文件"""
+        if self.dataset_files_list.count() == 0:
+            QtWidgets.QMessageBox.warning(self, "警告", "没有可处理的文件，请先扫描文件夹!")
+            return
+        
+        output_path = self.dataset_output_path.text().strip()
+        if not output_path or not os.path.isdir(output_path):
+            QtWidgets.QMessageBox.warning(self, "警告", "请选择有效的输出文件夹!")
+            return
+        
+        # 创建处理结果目录
+        dataset_output_dir = os.path.join(output_path, "beatmap_dataset")
+        os.makedirs(dataset_output_dir, exist_ok=True)
+        
+        # 获取所有文件路径
+        beatmap_files = []
+        for i in range(self.dataset_files_list.count()):
+            beatmap_files.append(self.dataset_files_list.item(i).text())
+        
+        total_files = len(beatmap_files)
+        processed_files = 0
+        
+        # 处理文件
+        all_results = []
+        
+        for file_path in beatmap_files:
+            try:
+                # 更新状态
+                self.dataset_status_label.setText(f"正在处理文件 ({processed_files+1}/{total_files}): {os.path.basename(file_path)}")
+                self.dataset_progress_bar.setValue(int(processed_files / total_files * 100))
+                QtCore.QCoreApplication.processEvents()
+                
+                # 加载谱面文件
+                if self.beatmap_analyzer.load_beatmap(file_path):
+                    # 分析谱面
+                    result = self.beatmap_analyzer.analyze()
+                    
+                    # 尝试找到关联的音频文件
+                    audio_file = None
+                    try:
+                        # 从谱面内容中获取音频文件名
+                        with open(file_path, "r", encoding="utf-8") as f:
+                            content = f.read()
+                            audio_lines = [line for line in content.split("\n") if "AudioFilename:" in line]
+                            if audio_lines:
+                                audio_filename = audio_lines[0].split(":")[-1].strip()
+                                beatmap_dir = os.path.dirname(file_path)
+                                audio_file = os.path.join(beatmap_dir, audio_filename)
+                                
+                                # 检查文件是否存在
+                                if not os.path.exists(audio_file):
+                                    audio_file = None
+                    except:
+                        audio_file = None
+                    
+                    # 如果找到音频文件，则进行音频分析
+                    if audio_file and os.path.exists(audio_file):
+                        try:
+                            if self.audio_analyzer.load_audio(audio_file):
+                                audio_features = self.audio_analyzer.analyze()
+                                result["audio_features"] = audio_features
+                        except Exception as e:
+                            print(f"无法分析音频文件 {audio_file}: {str(e)}")
+                    
+                    # 将结果添加到列表
+                    all_results.append({
+                        "beatmap_file": file_path,
+                        "audio_file": audio_file,
+                        "analysis": result
+                    })
+            
+            except Exception as e:
+                print(f"处理文件 {file_path} 时出错: {str(e)}")
+            
+            processed_files += 1
+        
+        # 保存数据集
+        try:
+            dataset_file = os.path.join(dataset_output_dir, "dataset.json")
+            with open(dataset_file, "w", encoding="utf-8") as f:
+                json.dump(all_results, f, indent=2)
+            
+            self.dataset_status_label.setText(f"数据集处理完成，已保存到: {dataset_file}")
+            self.dataset_progress_bar.setValue(100)
+            
+            QtWidgets.QMessageBox.information(
+                self, "处理完成", 
+                f"成功处理 {processed_files} 个文件!\n数据集已保存到: {dataset_file}"
+            )
+        except Exception as e:
+            QtWidgets.QMessageBox.critical(
+                self, "错误", 
+                f"保存数据集时出错: {str(e)}"
+            )
+    
+    def export_dataset(self):
+        """导出处理好的数据集"""
+        output_path = self.dataset_output_path.text().strip()
+        if not output_path or not os.path.isdir(output_path):
+            QtWidgets.QMessageBox.warning(self, "警告", "请先选择有效的输出文件夹!")
+            return
+        
+        dataset_file = os.path.join(output_path, "beatmap_dataset/dataset.json")
+        if not os.path.exists(dataset_file):
+            QtWidgets.QMessageBox.warning(self, "警告", "未找到处理好的数据集文件，请先处理数据集!")
+            return
+        
+        # 选择导出位置
+        export_path, _ = QtWidgets.QFileDialog.getSaveFileName(
+            self, "导出数据集", os.path.expanduser("~") + "/dataset_export.zip", "压缩文件 (*.zip)"
+        )
+        
+        if not export_path:
+            return
+        
+        try:
+            import shutil
+            
+            # 创建一个临时目录用于整理要导出的文件
+            import tempfile
+            temp_dir = tempfile.mkdtemp()
+            
+            # 复制数据集文件
+            shutil.copy2(dataset_file, os.path.join(temp_dir, "dataset.json"))
+            
+            # 创建压缩文件
+            shutil.make_archive(export_path.replace(".zip", ""), 'zip', temp_dir)
+            
+            # 清理临时目录
+            shutil.rmtree(temp_dir)
+            
+            QtWidgets.QMessageBox.information(
+                self, "导出成功", 
+                f"数据集已成功导出到: {export_path}"
+            )
+        except Exception as e:
+            QtWidgets.QMessageBox.critical(
+                self, "错误", 
+                f"导出数据集时出错: {str(e)}"
+            )
 
 
 def main():
