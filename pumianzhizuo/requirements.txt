@@ -1,32 +1,29 @@
-# 音乐游戏谱面生成项目依赖
-# ============================
-
-# 核心依赖
+# Core dependencies
 numpy==1.22.4
 torch==2.0.1
 librosa==0.10.0
 matplotlib==3.7.1
 tqdm==4.65.0
 
-# 音频处理
+# Audio processing
 soundfile==0.12.1
 audioread==3.0.0
 pyAudio==0.2.13
 
-# GUI框架
+# GUI framework
 PyQt5==5.15.9
 
-# 深度学习相关
+# Deep learning
 scikit-learn==1.2.2
 transformers==4.29.2
 
-# 数据处理
+# Data processing
 pandas==2.0.3
 h5py==3.9.0
 
-# 打包工具
+# Packaging
 pyinstaller==5.11.0
 
-# 开发工具
+# Development tools
 black==23.3.0
 pylint==2.17.4 

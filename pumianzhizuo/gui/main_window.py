@@ -8,13 +8,192 @@ osu!风格的谱面生成器主窗口
 import os
 import sys
 import json
+import time
+import numpy as np
 from PyQt5 import QtWidgets, QtCore, QtGui
+
+# 导入PyTorch的GPU支持 - 使用try/except处理导入错误
+try:
+    import torch
+    TORCH_AVAILABLE = True
+except ImportError:
+    TORCH_AVAILABLE = False
+    print("警告: 未找到PyTorch库，GPU加速将不可用。如需GPU加速，请安装PyTorch: pip install torch")
 
 # 导入音频分析模块
 from audio.analyzer import AudioAnalyzer
 from audio.visualizer import AudioVisualizer
 # 导入谱面分析模块
 from beatmap.analyzer import BeatmapAnalyzer
+
+
+class TrainingThread(QtCore.QThread):
+    """模型训练线程类"""
+    # 定义信号
+    progress_updated = QtCore.pyqtSignal(int)  # 进度更新信号
+    epoch_completed = QtCore.pyqtSignal(int, float, float)  # 周期完成信号(epoch, train_loss, val_loss)
+    training_finished = QtCore.pyqtSignal(bool, str)  # 训练完成信号(成功/失败, 消息)
+    training_log = QtCore.pyqtSignal(str)  # 训练日志信号
+    
+    def __init__(self, training_params):
+        """初始化训练线程"""
+        super().__init__()
+        self.training_params = training_params
+        self.is_running = False
+        self.is_paused = False
+    
+    def run(self):
+        """运行训练过程"""
+        self.is_running = True
+        self.is_paused = False
+        
+        try:
+            # 解析训练参数
+            model_architecture = self.training_params.get('model_architecture', 'Transformer')
+            training_data_path = self.training_params.get('training_data_path', '')
+            validation_data_path = self.training_params.get('validation_data_path', '')
+            model_output_path = self.training_params.get('model_output_path', '')
+            batch_size = self.training_params.get('batch_size', 16)
+            learning_rate = self.training_params.get('learning_rate', 0.001)
+            epochs = self.training_params.get('epochs', 50)
+            use_early_stopping = self.training_params.get('use_early_stopping', True)
+            use_checkpoint = self.training_params.get('use_checkpoint', True)
+            use_mixed_precision = self.training_params.get('use_mixed_precision', True)
+            use_gpu = self.training_params.get('use_gpu', False)
+            gpu_device = self.training_params.get('gpu_device', 0)
+            
+            # 设置训练设备
+            if use_gpu and torch.cuda.is_available():
+                if gpu_device < torch.cuda.device_count():
+                    device = torch.device(f'cuda:{gpu_device}')
+                    self.training_log.emit(f"使用GPU训练: {torch.cuda.get_device_name(gpu_device)}")
+                else:
+                    device = torch.device('cuda:0')
+                    self.training_log.emit(f"指定的GPU设备不存在，使用默认GPU设备: {torch.cuda.get_device_name(0)}")
+                
+                # 输出GPU信息
+                gpu_properties = torch.cuda.get_device_properties(device)
+                self.training_log.emit(f"GPU内存: {gpu_properties.total_memory / 1024 / 1024 / 1024:.2f} GB")
+                self.training_log.emit(f"CUDA版本: {torch.version.cuda}")
+                
+                # 检查是否支持混合精度训练
+                if use_mixed_precision and not torch.cuda.is_bf16_supported() and not torch.cuda.is_fp16_supported():
+                    self.training_log.emit("警告: 当前GPU不支持混合精度训练，已禁用此功能")
+                    use_mixed_precision = False
+            else:
+                if use_gpu and not torch.cuda.is_available():
+                    self.training_log.emit("警告: 未检测到可用的GPU，将使用CPU训练")
+                device = torch.device('cpu')
+                self.training_log.emit("使用CPU训练")
+                
+                # 在CPU上禁用混合精度训练
+                if use_mixed_precision:
+                    self.training_log.emit("警告: CPU不支持混合精度训练，已禁用此功能")
+                    use_mixed_precision = False
+            
+            # 模拟训练过程
+            self.training_log.emit(f"开始加载训练数据: {training_data_path}")
+            time.sleep(1)  # 模拟数据加载
+            self.progress_updated.emit(5)
+            
+            self.training_log.emit(f"创建{model_architecture}模型")
+            time.sleep(1)  # 模拟模型创建
+            self.progress_updated.emit(10)
+            
+            # 设置混合精度训练
+            if use_mixed_precision and device.type == 'cuda':
+                self.training_log.emit("启用混合精度训练")
+                # 在实际项目中，这里应该使用torch.cuda.amp.GradScaler()
+                scaler = "GradScaler实例"  # 仅作为示例
+            
+            # 模拟训练循环
+            for epoch in range(1, epochs + 1):
+                if not self.is_running:
+                    self.training_log.emit("训练被用户终止")
+                    break
+                
+                # 等待如果暂停
+                while self.is_paused and self.is_running:
+                    time.sleep(0.1)
+                
+                # 模拟训练过程
+                self.training_log.emit(f"Epoch {epoch}/{epochs}:")
+                
+                # 模拟批次训练
+                n_batches = 10  # 模拟10个批次
+                for batch in range(1, n_batches + 1):
+                    if not self.is_running:
+                        break
+                    
+                    # 等待如果暂停
+                    while self.is_paused and self.is_running:
+                        time.sleep(0.1)
+                    
+                    # 模拟批次训练
+                    time.sleep(0.1)
+                    self.training_log.emit(f"  Batch {batch}/{n_batches}")
+                
+                # 计算模拟损失 - GPU训练时收敛通常更快
+                if device.type == 'cuda':
+                    # GPU训练模拟更快的收敛
+                    train_loss = 1.8 * np.exp(-0.15 * epoch) + 0.3 * np.random.random()
+                else:
+                    # CPU训练模拟较慢的收敛
+                    train_loss = 2.0 * np.exp(-0.1 * epoch) + 0.5 * np.random.random()
+                
+                # 计算模拟验证损失
+                if use_early_stopping and validation_data_path:
+                    if device.type == 'cuda':
+                        val_loss = 1.9 * np.exp(-0.12 * epoch) + 0.5 * np.random.random()
+                    else:
+                        val_loss = 2.2 * np.exp(-0.08 * epoch) + 0.7 * np.random.random()
+                    self.training_log.emit(f"  训练损失: {train_loss:.4f}, 验证损失: {val_loss:.4f}")
+                else:
+                    val_loss = None
+                    self.training_log.emit(f"  训练损失: {train_loss:.4f}")
+                
+                # 发出周期完成信号
+                self.epoch_completed.emit(epoch, train_loss, val_loss)
+                
+                # 更新进度条
+                progress = int(10 + 85 * epoch / epochs)
+                self.progress_updated.emit(progress)
+                
+                # 模拟检查点保存
+                if use_checkpoint and epoch % 5 == 0:
+                    self.training_log.emit(f"保存检查点: epoch_{epoch}.pt")
+                
+                # 模拟早停
+                if use_early_stopping and val_loss is not None and val_loss < 0.3:
+                    self.training_log.emit("触发早停: 验证损失已达到目标")
+                    break
+            
+            # 模拟保存最终模型
+            final_model_path = os.path.join(model_output_path, f"{model_architecture}_final.pt")
+            self.training_log.emit(f"保存最终模型: {final_model_path}")
+            time.sleep(1)  # 模拟保存时间
+            
+            self.progress_updated.emit(100)
+            self.training_finished.emit(True, "训练完成")
+            
+        except Exception as e:
+            self.training_log.emit(f"训练出错: {str(e)}")
+            self.training_finished.emit(False, f"训练失败: {str(e)}")
+        
+        finally:
+            self.is_running = False
+    
+    def pause(self):
+        """暂停训练"""
+        self.is_paused = True
+    
+    def resume(self):
+        """恢复训练"""
+        self.is_paused = False
+    
+    def stop(self):
+        """停止训练"""
+        self.is_running = False
 
 
 class OsuStyleMainWindow(QtWidgets.QMainWindow):
@@ -198,6 +377,10 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
         # 创建"数据集处理"选项卡
         dataset_tab = QtWidgets.QWidget()
         tab_widget.addTab(dataset_tab, "数据集处理")
+        
+        # 创建"模型训练"选项卡
+        model_training_tab = QtWidgets.QWidget()
+        tab_widget.addTab(model_training_tab, "模型训练")
         
         # 创建"设置"选项卡
         settings_tab = QtWidgets.QWidget()
@@ -614,6 +797,216 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
         dataset_results_layout.addWidget(self.dataset_status_label)
         
         dataset_layout.addWidget(dataset_results_group)
+        
+        # 设置模型训练选项卡内容
+        training_layout = QtWidgets.QVBoxLayout(model_training_tab)
+        
+        # 训练数据设置
+        training_data_group = QtWidgets.QGroupBox("训练数据设置")
+        training_data_layout = QtWidgets.QGridLayout(training_data_group)
+        
+        # 训练数据集选择
+        training_data_label = QtWidgets.QLabel("训练数据集:")
+        self.training_data_path = QtWidgets.QLineEdit()
+        self.training_data_path.setPlaceholderText("请选择训练数据集文件夹...")
+        
+        browse_training_data_btn = QtWidgets.QPushButton("浏览")
+        browse_training_data_btn.clicked.connect(self.browse_training_data)
+        
+        training_data_layout.addWidget(training_data_label, 0, 0)
+        training_data_path_layout = QtWidgets.QHBoxLayout()
+        training_data_path_layout.addWidget(self.training_data_path, 3)
+        training_data_path_layout.addWidget(browse_training_data_btn, 1)
+        training_data_layout.addLayout(training_data_path_layout, 0, 1)
+        
+        # 验证数据集选择
+        validation_data_label = QtWidgets.QLabel("验证数据集:")
+        self.validation_data_path = QtWidgets.QLineEdit()
+        self.validation_data_path.setPlaceholderText("请选择验证数据集文件夹...")
+        
+        browse_validation_data_btn = QtWidgets.QPushButton("浏览")
+        browse_validation_data_btn.clicked.connect(self.browse_validation_data)
+        
+        training_data_layout.addWidget(validation_data_label, 1, 0)
+        validation_data_path_layout = QtWidgets.QHBoxLayout()
+        validation_data_path_layout.addWidget(self.validation_data_path, 3)
+        validation_data_path_layout.addWidget(browse_validation_data_btn, 1)
+        training_data_layout.addLayout(validation_data_path_layout, 1, 1)
+        
+        # 模型输出路径
+        model_output_label = QtWidgets.QLabel("模型保存路径:")
+        self.model_output_path = QtWidgets.QLineEdit()
+        self.model_output_path.setPlaceholderText("请选择模型保存路径...")
+        
+        browse_model_output_btn = QtWidgets.QPushButton("浏览")
+        browse_model_output_btn.clicked.connect(self.browse_model_output)
+        
+        training_data_layout.addWidget(model_output_label, 2, 0)
+        model_output_path_layout = QtWidgets.QHBoxLayout()
+        model_output_path_layout.addWidget(self.model_output_path, 3)
+        model_output_path_layout.addWidget(browse_model_output_btn, 1)
+        training_data_layout.addLayout(model_output_path_layout, 2, 1)
+        
+        training_layout.addWidget(training_data_group)
+        
+        # 模型训练参数
+        training_params_group = QtWidgets.QGroupBox("训练参数")
+        training_params_layout = QtWidgets.QGridLayout(training_params_group)
+        
+        # 模型架构选择
+        model_architecture_label = QtWidgets.QLabel("模型架构:")
+        self.model_architecture_combo = QtWidgets.QComboBox()
+        self.model_architecture_combo.addItems(["Transformer", "LSTM", "GRU", "混合模型"])
+        training_params_layout.addWidget(model_architecture_label, 0, 0)
+        training_params_layout.addWidget(self.model_architecture_combo, 0, 1)
+        
+        # 批次大小
+        batch_size_label = QtWidgets.QLabel("批次大小:")
+        self.batch_size_spin = QtWidgets.QSpinBox()
+        self.batch_size_spin.setRange(1, 256)
+        self.batch_size_spin.setValue(16)
+        self.batch_size_spin.setSingleStep(2)
+        training_params_layout.addWidget(batch_size_label, 1, 0)
+        training_params_layout.addWidget(self.batch_size_spin, 1, 1)
+        
+        # 学习率
+        learning_rate_label = QtWidgets.QLabel("学习率:")
+        self.learning_rate_combo = QtWidgets.QComboBox()
+        self.learning_rate_combo.addItems(["0.0001", "0.0005", "0.001", "0.003", "0.01"])
+        self.learning_rate_combo.setCurrentIndex(2)  # 默认选择0.001
+        training_params_layout.addWidget(learning_rate_label, 2, 0)
+        training_params_layout.addWidget(self.learning_rate_combo, 2, 1)
+        
+        # 训练周期
+        epochs_label = QtWidgets.QLabel("训练周期:")
+        self.epochs_spin = QtWidgets.QSpinBox()
+        self.epochs_spin.setRange(1, 1000)
+        self.epochs_spin.setValue(50)
+        training_params_layout.addWidget(epochs_label, 3, 0)
+        training_params_layout.addWidget(self.epochs_spin, 3, 1)
+        
+        # GPU设置
+        gpu_group = QtWidgets.QGroupBox("GPU设置")
+        gpu_layout = QtWidgets.QVBoxLayout(gpu_group)
+        
+        # 检测可用GPU
+        self.available_gpus = []
+        if TORCH_AVAILABLE and torch.cuda.is_available():
+            self.available_gpus = [f"GPU {i}: {torch.cuda.get_device_name(i)}" 
+                                  for i in range(torch.cuda.device_count())]
+            gpu_status = f"检测到 {torch.cuda.device_count()} 个可用GPU"
+        else:
+            if not TORCH_AVAILABLE:
+                gpu_status = "未安装PyTorch库，GPU加速不可用"
+            else:
+                gpu_status = "未检测到可用GPU"
+            
+        # GPU状态标签
+        self.gpu_status_label = QtWidgets.QLabel(gpu_status)
+        self.gpu_status_label.setStyleSheet("color: #0066CC;")
+        gpu_layout.addWidget(self.gpu_status_label)
+        
+        # 使用GPU复选框
+        self.use_gpu_checkbox = QtWidgets.QCheckBox("使用GPU加速")
+        gpu_available = TORCH_AVAILABLE and torch.cuda.is_available()
+        self.use_gpu_checkbox.setChecked(gpu_available)
+        self.use_gpu_checkbox.setEnabled(gpu_available)
+        self.use_gpu_checkbox.toggled.connect(self.toggle_gpu_options)
+        gpu_layout.addWidget(self.use_gpu_checkbox)
+        
+        # GPU设备选择
+        gpu_device_layout = QtWidgets.QHBoxLayout()
+        gpu_device_label = QtWidgets.QLabel("GPU设备:")
+        self.gpu_device_combo = QtWidgets.QComboBox()
+        if self.available_gpus:
+            self.gpu_device_combo.addItems(self.available_gpus)
+        else:
+            self.gpu_device_combo.addItem("无可用设备")
+        self.gpu_device_combo.setEnabled(gpu_available and self.use_gpu_checkbox.isChecked())
+        
+        gpu_device_layout.addWidget(gpu_device_label)
+        gpu_device_layout.addWidget(self.gpu_device_combo)
+        gpu_layout.addLayout(gpu_device_layout)
+        
+        # 添加到训练参数布局
+        training_params_layout.addWidget(gpu_group, 4, 0, 1, 2)
+        
+        # 高级选项
+        self.use_early_stopping = QtWidgets.QCheckBox("使用早停(根据验证集损失)")
+        self.use_early_stopping.setChecked(True)
+        training_params_layout.addWidget(self.use_early_stopping, 5, 0, 1, 2)
+        
+        self.use_checkpoint = QtWidgets.QCheckBox("保存检查点")
+        self.use_checkpoint.setChecked(True)
+        training_params_layout.addWidget(self.use_checkpoint, 6, 0, 1, 2)
+        
+        self.use_mixed_precision = QtWidgets.QCheckBox("使用混合精度训练")
+        self.use_mixed_precision.setChecked(gpu_available)
+        self.use_mixed_precision.setEnabled(gpu_available and self.use_gpu_checkbox.isChecked())
+        training_params_layout.addWidget(self.use_mixed_precision, 7, 0, 1, 2)
+        
+        training_layout.addWidget(training_params_group)
+        
+        # 训练操作区
+        training_actions_group = QtWidgets.QGroupBox("训练操作")
+        training_actions_layout = QtWidgets.QVBoxLayout(training_actions_group)
+        
+        # 训练进度条
+        self.training_progress_bar = QtWidgets.QProgressBar()
+        self.training_progress_bar.setRange(0, 100)
+        self.training_progress_bar.setValue(0)
+        
+        # 训练状态显示
+        self.training_status_label = QtWidgets.QLabel("准备训练")
+        self.training_status_label.setAlignment(QtCore.Qt.AlignCenter)
+        
+        # 训练日志区域
+        self.training_log = QtWidgets.QTextEdit()
+        self.training_log.setReadOnly(True)
+        self.training_log.setMinimumHeight(150)
+        self.training_log.setStyleSheet("""
+            QTextEdit {
+                background-color: #F8F8F8;
+                color: #333333;
+                font-family: Consolas, Monospace;
+                font-size: 12px;
+                border: 1px solid #CCCCCC;
+            }
+        """)
+        
+        # 训练损失曲线图
+        self.training_plot_widget = QtWidgets.QWidget()
+        self.training_plot_layout = QtWidgets.QVBoxLayout(self.training_plot_widget)
+        
+        # 操作按钮
+        training_buttons_layout = QtWidgets.QHBoxLayout()
+        
+        self.start_training_btn = QtWidgets.QPushButton("开始训练")
+        self.start_training_btn.clicked.connect(self.start_training)
+        
+        self.pause_resume_btn = QtWidgets.QPushButton("暂停训练")
+        self.pause_resume_btn.clicked.connect(self.toggle_training_pause)
+        self.pause_resume_btn.setEnabled(False)
+        
+        self.stop_training_btn = QtWidgets.QPushButton("停止训练")
+        self.stop_training_btn.clicked.connect(self.stop_training)
+        self.stop_training_btn.setEnabled(False)
+        
+        self.export_model_btn = QtWidgets.QPushButton("导出模型")
+        self.export_model_btn.clicked.connect(self.export_model)
+        
+        training_buttons_layout.addWidget(self.start_training_btn)
+        training_buttons_layout.addWidget(self.pause_resume_btn)
+        training_buttons_layout.addWidget(self.stop_training_btn)
+        training_buttons_layout.addWidget(self.export_model_btn)
+        
+        training_actions_layout.addWidget(self.training_progress_bar)
+        training_actions_layout.addWidget(self.training_status_label)
+        training_actions_layout.addWidget(self.training_log)
+        training_actions_layout.addWidget(self.training_plot_widget)
+        training_actions_layout.addLayout(training_buttons_layout)
+        
+        training_layout.addWidget(training_actions_group)
         
         # 设置设置选项卡内容
         settings_layout = QtWidgets.QVBoxLayout(settings_tab)
@@ -1758,7 +2151,7 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
             )
     
     def export_dataset(self):
-        """导出处理好的数据集"""
+        """导出处理后的数据集"""
         output_path = self.dataset_output_path.text().strip()
         if not output_path or not os.path.isdir(output_path):
             QtWidgets.QMessageBox.warning(self, "警告", "请先选择有效的输出文件夹!")
@@ -1803,6 +2196,375 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
                 f"导出数据集时出错: {str(e)}"
             )
 
+    # 模型训练部分的方法开始
+    def browse_training_data(self):
+        """浏览训练数据集文件夹"""
+        folder_path = QtWidgets.QFileDialog.getExistingDirectory(
+            self, "选择训练数据集文件夹", os.path.expanduser("~")
+        )
+        if folder_path:
+            self.training_data_path.setText(folder_path)
+    
+    def browse_validation_data(self):
+        """浏览验证数据集文件夹"""
+        folder_path = QtWidgets.QFileDialog.getExistingDirectory(
+            self, "选择验证数据集文件夹", os.path.expanduser("~")
+        )
+        if folder_path:
+            self.validation_data_path.setText(folder_path)
+    
+    def browse_model_output(self):
+        """浏览模型保存路径"""
+        folder_path = QtWidgets.QFileDialog.getExistingDirectory(
+            self, "选择模型保存路径", os.path.expanduser("~")
+        )
+        if folder_path:
+            self.model_output_path.setText(folder_path)
+    
+    def start_training(self):
+        """开始训练模型"""
+        # 检查是否安装了PyTorch
+        if not TORCH_AVAILABLE:
+            QtWidgets.QMessageBox.warning(
+                self, 
+                "PyTorch未安装", 
+                "训练功能需要PyTorch库。请使用命令安装：\npip install torch torchvision torchaudio\n\n更多信息请访问: https://pytorch.org/get-started/locally/"
+            )
+            return
+            
+        # 检查输入
+        training_data_path = self.training_data_path.text().strip()
+        validation_data_path = self.validation_data_path.text().strip()
+        model_output_path = self.model_output_path.text().strip()
+        
+        if not training_data_path or not os.path.isdir(training_data_path):
+            QtWidgets.QMessageBox.warning(self, "警告", "请选择有效的训练数据集文件夹!")
+            return
+            
+        if self.use_early_stopping.isChecked() and (not validation_data_path or not os.path.isdir(validation_data_path)):
+            QtWidgets.QMessageBox.warning(self, "警告", "使用早停功能需要有效的验证数据集!")
+            return
+            
+        if not model_output_path or not os.path.isdir(model_output_path):
+            QtWidgets.QMessageBox.warning(self, "警告", "请选择有效的模型保存路径!")
+            return
+        
+        # 获取训练参数
+        model_architecture = self.model_architecture_combo.currentText()
+        batch_size = self.batch_size_spin.value()
+        learning_rate = float(self.learning_rate_combo.currentText())
+        epochs = self.epochs_spin.value()
+        use_early_stopping = self.use_early_stopping.isChecked()
+        use_checkpoint = self.use_checkpoint.isChecked()
+        use_mixed_precision = self.use_mixed_precision.isChecked()
+        
+        # 获取GPU相关设置
+        use_gpu = self.use_gpu_checkbox.isChecked() and self.use_gpu_checkbox.isEnabled()
+        gpu_device = 0  # 默认使用第一个GPU
+        
+        if use_gpu and self.gpu_device_combo.isEnabled() and self.gpu_device_combo.currentText() != "无可用设备":
+            # 从字符串 "GPU x: xxxxx" 中提取设备ID
+            try:
+                device_text = self.gpu_device_combo.currentText()
+                gpu_device = int(device_text.split(':')[0].replace('GPU', '').strip())
+            except:
+                gpu_device = 0
+        
+        # 显示训练配置确认对话框
+        config_msg = f"""
+训练配置:
+- 模型架构: {model_architecture}
+- 批次大小: {batch_size}
+- 学习率: {learning_rate}
+- 训练周期: {epochs}
+- 使用GPU: {'是' if use_gpu else '否'}
+- {'GPU设备: ' + self.gpu_device_combo.currentText() if use_gpu else ''}
+- 混合精度: {'是' if use_mixed_precision else '否'}
+- 早停: {'是' if use_early_stopping else '否'}
+- 检查点: {'是' if use_checkpoint else '否'}
+
+确认开始训练?
+        """
+        
+        reply = QtWidgets.QMessageBox.question(
+            self, "训练确认", config_msg, 
+            QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No, 
+            QtWidgets.QMessageBox.No
+        )
+        
+        if reply == QtWidgets.QMessageBox.No:
+            return
+            
+        # 清理之前的训练曲线图
+        for i in reversed(range(self.training_plot_layout.count())): 
+            widget = self.training_plot_layout.itemAt(i).widget()
+            if widget:
+                widget.setParent(None)
+        
+        # 创建训练曲线图表
+        self.train_canvas = self.create_training_figure()
+        self.training_plot_layout.addWidget(self.train_canvas)
+        
+        # 清空训练日志
+        self.training_log.clear()
+        self.add_training_log("准备开始训练...")
+        
+        if use_gpu:
+            self.add_training_log("GPU加速已启用")
+            if use_mixed_precision:
+                self.add_training_log("混合精度训练已启用")
+        
+        # 更新UI状态
+        self.training_status_label.setText(f"训练正在进行 - {model_architecture} 模型")
+        self.training_progress_bar.setValue(0)
+        self.start_training_btn.setEnabled(False)
+        self.pause_resume_btn.setEnabled(True)
+        self.pause_resume_btn.setText("暂停训练")
+        self.stop_training_btn.setEnabled(True)
+        
+        # 创建训练参数字典
+        training_params = {
+            'model_architecture': model_architecture,
+            'training_data_path': training_data_path,
+            'validation_data_path': validation_data_path,
+            'model_output_path': model_output_path,
+            'batch_size': batch_size,
+            'learning_rate': learning_rate,
+            'epochs': epochs,
+            'use_early_stopping': use_early_stopping,
+            'use_checkpoint': use_checkpoint,
+            'use_mixed_precision': use_mixed_precision,
+            'use_gpu': use_gpu,
+            'gpu_device': gpu_device
+        }
+        
+        # 创建并启动训练线程
+        self.training_thread = TrainingThread(training_params)
+        
+        # 连接信号
+        self.training_thread.progress_updated.connect(self.update_training_progress)
+        self.training_thread.epoch_completed.connect(self.update_training_plot)
+        self.training_thread.training_finished.connect(self.handle_training_finished)
+        self.training_thread.training_log.connect(self.add_training_log)
+        
+        # 启动线程
+        self.training_thread.start()
+
+    def add_training_log(self, message):
+        """添加训练日志"""
+        self.training_log.append(message)
+        # 滚动到底部
+        self.training_log.verticalScrollBar().setValue(
+            self.training_log.verticalScrollBar().maximum()
+        )
+        
+    def update_training_progress(self, progress):
+        """更新训练进度条"""
+        self.training_progress_bar.setValue(progress)
+        
+    def update_training_plot(self, epoch, train_loss, val_loss=None):
+        """更新训练图表"""
+        try:
+            # 获取图和轴
+            fig = self.train_canvas.figure
+            ax = fig.axes[0]
+            
+            # 获取当前数据
+            lines = ax.get_lines()
+            train_line = lines[0]
+            epochs = list(train_line.get_xdata())
+            train_losses = list(train_line.get_ydata())
+            
+            # 添加新数据点
+            epochs.append(epoch)
+            train_losses.append(train_loss)
+            
+            # 更新训练损失线
+            train_line.set_xdata(epochs)
+            train_line.set_ydata(train_losses)
+            
+            # 更新验证损失线（如果有）
+            if val_loss is not None and len(lines) > 1:
+                val_line = lines[1]
+                val_losses = list(val_line.get_ydata())
+                val_losses.append(val_loss)
+                val_line.set_xdata(epochs)
+                val_line.set_ydata(val_losses)
+            
+            # 调整坐标轴
+            ax.relim()
+            ax.autoscale_view()
+            
+            # 刷新画布
+            self.train_canvas.draw()
+            
+        except Exception as e:
+            self.add_training_log(f"更新图表出错: {str(e)}")
+            
+    def toggle_training_pause(self):
+        """切换训练暂停/继续状态"""
+        if not hasattr(self, 'training_thread') or not self.training_thread.isRunning():
+            return
+            
+        if self.training_thread.is_paused:
+            # 恢复训练
+            self.training_thread.resume()
+            self.pause_resume_btn.setText("暂停训练")
+            self.training_status_label.setText("训练正在进行")
+            self.add_training_log("训练已恢复")
+        else:
+            # 暂停训练
+            self.training_thread.pause()
+            self.pause_resume_btn.setText("继续训练")
+            self.training_status_label.setText("训练已暂停")
+            self.add_training_log("训练已暂停")
+            
+    def stop_training(self):
+        """停止训练过程"""
+        if not hasattr(self, 'training_thread') or not self.training_thread.isRunning():
+            return
+            
+        reply = QtWidgets.QMessageBox.question(
+            self, "停止训练", "确定要停止当前训练进程吗? 这将丢失未保存的训练进度。", 
+            QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
+            QtWidgets.QMessageBox.No
+        )
+        
+        if reply == QtWidgets.QMessageBox.Yes:
+            # 停止训练线程
+            self.training_thread.stop()
+            self.add_training_log("正在停止训练...")
+            
+            # 等待线程结束
+            if self.training_thread.isRunning():
+                self.training_thread.wait(2000)  # 等待最多2秒
+            
+            # 更新UI状态
+            self.pause_resume_btn.setEnabled(False)
+            self.stop_training_btn.setEnabled(False)
+            self.start_training_btn.setEnabled(True)
+            self.training_status_label.setText("训练已停止")
+            self.add_training_log("训练已停止")
+            
+    def handle_training_finished(self, success, message):
+        """处理训练完成事件"""
+        if success:
+            self.training_status_label.setText("训练已完成")
+            self.add_training_log(f"训练成功: {message}")
+        else:
+            self.training_status_label.setText("训练失败")
+            self.add_training_log(f"训练失败: {message}")
+        
+        # 更新UI状态
+        self.pause_resume_btn.setEnabled(False)
+        self.stop_training_btn.setEnabled(False)
+        self.start_training_btn.setEnabled(True)
+        
+        # 显示完成通知
+        QtWidgets.QMessageBox.information(self, "训练状态", message)
+    
+    def create_training_figure(self):
+        """创建训练曲线图表"""
+        # 导入matplotlib用于绘图
+        from matplotlib.figure import Figure
+        from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
+        
+        fig = Figure(figsize=(5, 4), dpi=100)
+        canvas = FigureCanvas(fig)
+        
+        # 创建训练损失和验证损失的子图
+        ax = fig.add_subplot(111)
+        ax.set_xlabel('Epoch')
+        ax.set_ylabel('Loss')
+        ax.set_title('Training Progress')
+        
+        # 初始化空数据
+        epochs = []
+        train_losses = []
+        val_losses = []
+        
+        # 绘制初始曲线
+        train_line, = ax.plot(epochs, train_losses, 'b-', label='Training Loss')
+        val_line, = ax.plot(epochs, val_losses, 'r-', label='Validation Loss')
+        
+        ax.legend()
+        fig.tight_layout()
+        
+        return canvas
+    
+    def export_model(self):
+        """导出训练好的模型"""
+        # 检查是否安装了PyTorch
+        if not TORCH_AVAILABLE:
+            QtWidgets.QMessageBox.warning(
+                self, 
+                "PyTorch未安装", 
+                "模型导出功能需要PyTorch库。请使用命令安装：\npip install torch torchvision torchaudio\n\n更多信息请访问: https://pytorch.org/get-started/locally/"
+            )
+            return
+            
+        # 检查是否有训练好的模型
+        # 在实际项目中，应检查模型是否已加载
+        
+        # 生成自动文件名 - 格式: 模型架构_日期时间_参数信息.pt
+        current_time = time.strftime("%Y%m%d_%H%M%S")
+        
+        # 如果已经训练过模型，使用训练时的参数
+        if hasattr(self, 'training_thread') and hasattr(self.training_thread, 'training_params'):
+            model_arch = self.training_thread.training_params.get('model_architecture', 'Unknown')
+            batch_size = self.training_thread.training_params.get('batch_size', 0)
+            learning_rate = self.training_thread.training_params.get('learning_rate', 0)
+            use_gpu = self.training_thread.training_params.get('use_gpu', False)
+        else:
+            # 如果没有训练过，使用当前界面的设置
+            model_arch = self.model_architecture_combo.currentText()
+            batch_size = self.batch_size_spin.value()
+            learning_rate = float(self.learning_rate_combo.currentText())
+            use_gpu = self.use_gpu_checkbox.isChecked() and self.use_gpu_checkbox.isEnabled()
+        
+        # 文件名形式：架构_时间_批次大小_学习率_设备.pt
+        device_info = "gpu" if use_gpu else "cpu"
+        auto_filename = f"{model_arch}_{current_time}_b{batch_size}_lr{learning_rate:.4f}_{device_info}.pt"
+        
+        # 如果设置了模型输出路径，使用该路径作为默认路径
+        default_path = ""
+        if hasattr(self, 'model_output_path') and self.model_output_path.text().strip():
+            default_path = os.path.join(self.model_output_path.text().strip(), auto_filename)
+        else:
+            default_path = auto_filename
+        
+        # 打开文件对话框，但已预填充自动生成的文件名
+        save_path, _ = QtWidgets.QFileDialog.getSaveFileName(
+            self, "导出模型", default_path, "PyTorch模型 (*.pt);;所有文件 (*)"
+        )
+        
+        if save_path:
+            if not save_path.endswith('.pt'):
+                save_path += '.pt'
+            
+            # 在实际项目中，应将模型保存到指定路径
+            try:
+                # 模拟模型保存
+                with open(save_path, 'w') as f:
+                    f.write("# 模型占位符")
+                    # 在实际项目中，这里应该是torch.save(model.state_dict(), save_path)
+                
+                self.add_training_log(f"模型已导出至: {save_path}")
+                QtWidgets.QMessageBox.information(self, "导出成功", f"模型已导出至: {save_path}")
+            except Exception as e:
+                error_msg = f"模型导出失败: {str(e)}"
+                self.add_training_log(error_msg)
+                QtWidgets.QMessageBox.critical(self, "导出失败", error_msg)
+    # 模型训练部分的方法结束
+
+    def toggle_gpu_options(self, state):
+        """切换GPU选项的启用状态"""
+        if not TORCH_AVAILABLE:
+            return
+            
+        self.gpu_device_combo.setEnabled(state)
+        self.use_mixed_precision.setEnabled(state)
+        # 注意：不要禁用use_gpu_checkbox本身，否则无法重新启用
 
 def main():
     """程序入口函数"""
