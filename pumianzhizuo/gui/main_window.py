@@ -45,6 +45,9 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
         
         # 初始化UI
         self.init_ui()
+        
+        # 记住上次使用的导出格式
+        self.last_export_format = "JSON文件 (*.json)"
 
     def setup_appearance(self):
         """设置外观样式"""
@@ -1098,15 +1101,73 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
             QtWidgets.QMessageBox.warning(self, "警告", "没有可导出的谱面分析结果")
             return
         
-        # 选择保存路径
-        save_path, _ = QtWidgets.QFileDialog.getSaveFileName(
-            self, "导出谱面分析", "", "JSON文件 (*.json);;HTML报告 (*.html);;文本文件 (*.txt)"
+        # 从分析结果中获取元数据用于生成文件名
+        metadata = self.beatmap_analyzer.analysis_results.get("metadata", {})
+        title = metadata.get("title", "unknown")
+        artist = metadata.get("artist", "unknown")
+        version = metadata.get("version", "unknown")
+        
+        # 构建文件名基础部分，替换非法字符
+        def sanitize_filename(name):
+            """替换文件名中的非法字符"""
+            illegal_chars = ['/', '\\', ':', '*', '?', '"', '<', '>', '|']
+            for char in illegal_chars:
+                name = name.replace(char, '_')
+            return name
+        
+        base_filename = f"{sanitize_filename(title)}_{sanitize_filename(artist)}_{sanitize_filename(version)}_分析"
+        
+        # 确定默认保存文件夹路径
+        default_dir = ""
+        if self.output_path.text():
+            # 如果设置了输出目录，使用该目录
+            default_dir = self.output_path.text()
+        elif self.beatmap_analyzer.beatmap_path:
+            # 否则使用谱面文件所在目录
+            default_dir = os.path.dirname(self.beatmap_analyzer.beatmap_path)
+        
+        # 提供三种格式的默认文件名
+        json_path = os.path.join(default_dir, f"{base_filename}.json")
+        html_path = os.path.join(default_dir, f"{base_filename}.html")
+        txt_path = os.path.join(default_dir, f"{base_filename}.txt")
+        
+        # 根据上次使用的格式选择默认文件路径
+        default_path = json_path  # 默认使用JSON格式
+        if "HTML" in self.last_export_format:
+            default_path = html_path
+        elif "文本" in self.last_export_format:
+            default_path = txt_path
+        
+        # 定义文件类型过滤器
+        file_filters = "JSON文件 (*.json);;HTML报告 (*.html);;文本文件 (*.txt)"
+        
+        # 选择保存路径，使用上次的格式作为默认选择
+        save_path, selected_filter = QtWidgets.QFileDialog.getSaveFileName(
+            self, "导出谱面分析", default_path, file_filters, self.last_export_format
         )
         
         if not save_path:
             return
         
+        # 记住当前选择的格式，用于下次导出
+        self.last_export_format = selected_filter
+        
         try:
+            # 确保文件扩展名与选择的过滤器匹配
+            _, ext = os.path.splitext(save_path)
+            expected_ext = ""
+            
+            if "JSON" in selected_filter:
+                expected_ext = ".json"
+            elif "HTML" in selected_filter:
+                expected_ext = ".html"
+            elif "文本" in selected_filter:
+                expected_ext = ".txt"
+            
+            # 如果用户删除了扩展名或者与选择的过滤器不匹配，则添加正确的扩展名
+            if not ext or ext.lower() != expected_ext:
+                save_path = save_path + expected_ext
+            
             # 根据文件扩展名选择导出格式
             _, ext = os.path.splitext(save_path)
             
@@ -1128,7 +1189,7 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
                 with open(save_path, 'w', encoding='utf-8') as f:
                     f.write(self.beatmap_analyzer.get_difficulty_summary())
                     
-            self.beatmap_status_label.setText(f"分析结果已导出到: {save_path}")
+            self.beatmap_status_label.setText(f"分析结果已导出到: {os.path.basename(save_path)}")
             
         except Exception as e:
             QtWidgets.QMessageBox.critical(self, "导出错误", f"导出分析结果时出错: {str(e)}")
