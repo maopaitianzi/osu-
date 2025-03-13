@@ -716,14 +716,14 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
         # 更新状态文本
         self.status_label.setText(f"音频分析完成! BPM: {bpm}, 节拍数: {beat_count}")
         
-        # 显示成功消息
-        QtWidgets.QMessageBox.information(
-            self, "分析完成", 
-            f"音频分析完成！\n"
-            f"检测到BPM：{bpm}\n"
-            f"节拍数：{beat_count}\n"
-            f"音频长度：{features.get('duration', 0):.1f}秒"
-        )
+        # 注释掉提示框，避免打断后续操作
+        # QtWidgets.QMessageBox.information(
+        #     self, "分析完成", 
+        #     f"音频分析完成！\n"
+        #     f"检测到BPM：{bpm}\n"
+        #     f"节拍数：{beat_count}\n"
+        #     f"音频长度：{features.get('duration', 0):.1f}秒"
+        # )
         
         # 仅当可视化功能启用时才更新可视化器
         if self.enable_visualization_cb.isChecked():
@@ -782,10 +782,11 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
             QtCore.QThread.msleep(30)
         
         self.status_label.setText("谱面生成完成！")
-        QtWidgets.QMessageBox.information(
-            self, "成功", 
-            "谱面生成完成！\n已保存至：" + os.path.splitext(file_path)[0] + ".osu"
-        )
+        # 注释掉提示框，避免打断批量处理
+        # QtWidgets.QMessageBox.information(
+        #     self, "成功", 
+        #     "谱面生成完成！\n已保存至：" + os.path.splitext(file_path)[0] + ".osu"
+        # )
     
     def preview_beatmap(self):
         """预览谱面"""
@@ -830,12 +831,44 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
         if self.output_path.text():
             # 如果设置了输出目录，使用该目录
             default_dir = self.output_path.text()
-            audio_filename = os.path.basename(self.file_path.text()) if self.file_path.text() else "audio"
+            audio_filepath = self.file_path.text() if self.file_path.text() else ""
+            audio_filename = os.path.basename(audio_filepath)
+            
+            # 获取音频文件所在目录名称作为前缀，确保文件名唯一
+            parent_dir_name = "unknown"
+            if audio_filepath:
+                parent_dir = os.path.dirname(audio_filepath)
+                if parent_dir:
+                    parent_dir_name = os.path.basename(parent_dir)
+            
+            # 添加时间戳确保唯一性
+            import datetime
+            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            
+            # 构建基础文件名
             base_filename = os.path.splitext(audio_filename)[0]
-            default_path = os.path.join(default_dir, f"{base_filename}.analysis.json")
+            unique_filename = f"{parent_dir_name}_{base_filename}_{timestamp}"
+            
+            default_path = os.path.join(default_dir, f"{unique_filename}.analysis.json")
         else:
             # 否则使用音频文件所在目录
-            default_path = os.path.splitext(self.file_path.text())[0] + ".analysis.json" if self.file_path.text() else ""
+            audio_filepath = self.file_path.text() if self.file_path.text() else ""
+            if audio_filepath:
+                # 获取音频文件所在目录名称
+                parent_dir = os.path.dirname(audio_filepath)
+                parent_dir_name = os.path.basename(parent_dir) if parent_dir else "unknown"
+                
+                # 添加时间戳确保唯一性
+                import datetime
+                timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+                
+                # 构建基础文件名
+                base_filename = os.path.splitext(os.path.basename(audio_filepath))[0]
+                unique_filename = f"{parent_dir_name}_{base_filename}_{timestamp}"
+                
+                default_path = os.path.join(os.path.dirname(audio_filepath), f"{unique_filename}.analysis.json")
+            else:
+                default_path = ""
         
         file_path, _ = QtWidgets.QFileDialog.getSaveFileName(
             self, "保存分析结果", default_path, "JSON文件 (*.json)"
@@ -893,24 +926,24 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
             self.progress_bar.setValue(100)
             self.status_label.setText(f"分析结果已导出至: {os.path.basename(output_path)}")
             
-            # 显示成功消息
-            QtWidgets.QMessageBox.information(
-                self, "导出成功", 
-                f"音频分析结果已成功导出至:\n{output_path}"
-            )
+            # 注释掉提示框，避免打断后续操作
+            # QtWidgets.QMessageBox.information(
+            #     self, "导出成功", 
+            #     f"音频分析结果已成功导出至:\n{output_path}"
+            # )
             
-            # 询问是否打开所在文件夹
-            reply = QtWidgets.QMessageBox.question(
-                self, "打开文件夹", 
-                "是否要打开导出文件所在的文件夹?",
-                QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
-                QtWidgets.QMessageBox.No
-            )
+            # 注释掉询问是否打开所在文件夹的代码，避免打断后续操作
+            # reply = QtWidgets.QMessageBox.question(
+            #     self, "打开文件夹", 
+            #     "是否要打开导出文件所在的文件夹?",
+            #     QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
+            #     QtWidgets.QMessageBox.No
+            # )
             
-            if reply == QtWidgets.QMessageBox.Yes:
-                # 打开文件所在文件夹
-                folder_path = os.path.dirname(output_path)
-                os.startfile(folder_path) if os.name == 'nt' else os.system(f'xdg-open "{folder_path}"')
+            # if reply == QtWidgets.QMessageBox.Yes:
+            #     # 打开文件所在文件夹
+            #     folder_path = os.path.dirname(output_path)
+            #     os.startfile(folder_path) if os.name == 'nt' else os.system(f'xdg-open "{folder_path}"')
                 
         except Exception as e:
             # 显示错误消息
