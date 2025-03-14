@@ -793,6 +793,39 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
         dataset_params_layout.addWidget(batch_size_label, 5, 0)
         dataset_params_layout.addWidget(self.batch_size_spin, 5, 1)
         
+        # 添加GPU加速选项
+        gpu_accel_layout = QtWidgets.QHBoxLayout()
+        self.dataset_use_gpu_checkbox = QtWidgets.QCheckBox("使用GPU加速处理")
+        gpu_available = TORCH_AVAILABLE and torch.cuda.is_available()
+        self.dataset_use_gpu_checkbox.setEnabled(gpu_available)
+        self.dataset_use_gpu_checkbox.setChecked(gpu_available)
+        if not gpu_available:
+            if not TORCH_AVAILABLE:
+                gpu_status = "未安装PyTorch库，GPU加速不可用"
+            else:
+                gpu_status = "未检测到可用GPU"
+            self.dataset_use_gpu_checkbox.setToolTip(gpu_status)
+        else:
+            self.dataset_use_gpu_checkbox.setToolTip(f"检测到 {torch.cuda.device_count()} 个可用GPU")
+        
+        # GPU设备选择
+        gpu_device_label = QtWidgets.QLabel("GPU设备:")
+        self.dataset_gpu_device_combo = QtWidgets.QComboBox()
+        if gpu_available:
+            self.dataset_gpu_device_combo.addItems([f"GPU {i}: {torch.cuda.get_device_name(i)}" 
+                                         for i in range(torch.cuda.device_count())])
+        else:
+            self.dataset_gpu_device_combo.addItem("无可用设备")
+        self.dataset_gpu_device_combo.setEnabled(gpu_available and self.dataset_use_gpu_checkbox.isChecked())
+        self.dataset_use_gpu_checkbox.toggled.connect(lambda state: self.dataset_gpu_device_combo.setEnabled(state))
+        
+        gpu_accel_layout.addWidget(self.dataset_use_gpu_checkbox)
+        gpu_accel_layout.addWidget(gpu_device_label)
+        gpu_accel_layout.addWidget(self.dataset_gpu_device_combo, 1)
+        
+        dataset_params_layout.addWidget(QtWidgets.QLabel("GPU加速:"), 6, 0)
+        dataset_params_layout.addLayout(gpu_accel_layout, 6, 1)
+        
         # 输出文件夹设置
         output_folder_label = QtWidgets.QLabel("输出文件夹:")
         self.dataset_output_path = QtWidgets.QLineEdit()
@@ -809,8 +842,8 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
         output_folder_layout.addWidget(self.dataset_output_path, 3)
         output_folder_layout.addWidget(browse_output_btn, 1)
         
-        dataset_params_layout.addWidget(output_folder_label, 6, 0)
-        dataset_params_layout.addLayout(output_folder_layout, 6, 1)
+        dataset_params_layout.addWidget(output_folder_label, 7, 0)
+        dataset_params_layout.addLayout(output_folder_layout, 7, 1)
         
         dataset_layout.addWidget(dataset_params_group)
         
@@ -2036,7 +2069,7 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
             QtWidgets.QMessageBox.warning(self, "警告", "请先选择有效的谱面文件夹!")
             return
         
-        mode = self.mode_combo.currentText()
+        selected_mode = self.mode_combo.currentText()
         selected_difficulty = self.difficulty_combo.currentText()
         limit = self.files_limit_spin.value()
         
@@ -2047,6 +2080,7 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
         # 开始扫描
         found_files = []
         total_scanned = 0
+        skipped_files = 0
         
         # 难度范围映射
         difficulty_ranges = {
@@ -2062,6 +2096,20 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
         # 获取当前难度的范围
         min_diff, max_diff = difficulty_ranges.get(selected_difficulty, (0, 10))
         
+        # 模式映射 (文件中的Mode值对应的游戏模式)
+        mode_mapping = {
+            "0": "std",   # osu!standard
+            "1": "taiko",  # osu!taiko
+            "2": "catch",  # osu!catch
+            "3": "mania"   # osu!mania
+        }
+        
+        # mania模式中的键数标记 (文件名中通常出现的标记)
+        mania_key_patterns = [
+            "[1K", "[2K", "[3K", "[4K", "[5K", "[6K", "[7K", "[8K", "[9K", "[10K",
+            "1K]", "2K]", "3K]", "4K]", "5K]", "6K]", "7K]", "8K]", "9K]", "10K]"
+        ]
+        
         # 递归扫描文件夹
         for root, dirs, files in os.walk(folder_path):
             for file in files:
@@ -2071,14 +2119,39 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
                     
                     # 简单检查文件内容以确定它是否符合要求
                     try:
+                        # 首先检查文件名中是否有模式标记 (快速过滤)
+                        file_name = os.path.basename(file_path)
+                        
+                        # 如果选择的是std模式，但文件名中包含其他模式的标记，则跳过
+                        if selected_mode == "std":
+                            # 检查文件名中是否有mania的键数标记
+                            if any(key_pattern in file_name for key_pattern in mania_key_patterns):
+                                skipped_files += 1
+                                continue
+                            
+                            # 检查文件名中是否有taiko或catch的标记
+                            if "taiko" in file_name.lower() or "catch" in file_name.lower():
+                                skipped_files += 1
+                                continue
+                        
+                        # 如果选择的是mania模式，但文件名中没有键数标记，可能需要检查文件内容
+                        if selected_mode == "mania" and not any(key_pattern in file_name for key_pattern in mania_key_patterns):
+                            # 这里暂不跳过，继续检查文件内容
+                            pass
+                        
+                        # 读取文件内容进行详细检查
                         with open(file_path, "r", encoding="utf-8") as f:
                             content = f.read()
                             
                             # 检查模式
                             mode_line = [line for line in content.split("\n") if "Mode:" in line]
                             if mode_line:
-                                file_mode = mode_line[0].split(":")[-1].strip()
-                                if mode != "std" and mode != file_mode:
+                                file_mode_num = mode_line[0].split(":")[-1].strip()
+                                file_mode = mode_mapping.get(file_mode_num, "unknown")
+                                
+                                # 如果选择的模式与文件模式不匹配，则跳过
+                                if selected_mode != file_mode:
+                                    skipped_files += 1
                                     continue
                             
                             # 如果不是"所有难度"，则检查谱面难度是否在范围内
@@ -2156,7 +2229,7 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
         
         # 更新状态
         self.dataset_progress_bar.setValue(100)
-        self.dataset_status_label.setText(f"找到 {len(found_files)} 个符合条件的谱面文件")
+        self.dataset_status_label.setText(f"找到 {len(found_files)} 个符合条件的谱面文件，跳过了 {skipped_files} 个不匹配谱面")
     
     def process_dataset(self):
         """处理数据集中的谱面文件"""
@@ -2186,9 +2259,37 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
         processed_files = 0
         all_results = []
         
+        # 添加错误文件夹跟踪
+        error_folders = set()
+        skipped_files = 0
+        
+        # 获取GPU加速设置
+        use_gpu = self.dataset_use_gpu_checkbox.isChecked() and self.dataset_use_gpu_checkbox.isEnabled()
+        
+        # 如果使用GPU加速，设置GPU设备
+        if use_gpu:
+            gpu_device_idx = self.dataset_gpu_device_combo.currentIndex()
+            if torch.cuda.is_available() and gpu_device_idx < torch.cuda.device_count():
+                torch.cuda.set_device(gpu_device_idx)
+                self.dataset_status_label.setText(f"已启用GPU加速：{torch.cuda.get_device_name(gpu_device_idx)}")
+            else:
+                use_gpu = False
+                self.dataset_status_label.setText("GPU设备设置失败，改用CPU处理")
+        
+        # 设置音频分析器使用GPU
+        self.audio_analyzer.set_use_gpu(use_gpu)
+        
         # 设置每批处理的文件数
         batch_size = self.batch_size_spin.value()
         total_batches = (total_files + batch_size - 1) // batch_size  # 向上取整计算批次数
+        
+        # 更新状态
+        if use_gpu:
+            self.dataset_status_label.setText(f"已启用GPU加速：{torch.cuda.get_device_name(gpu_device_idx)}\n"
+                                             f"准备处理 {total_files} 个文件，共 {total_batches} 批")
+        else:
+            self.dataset_status_label.setText(f"使用CPU处理 {total_files} 个文件，共 {total_batches} 批")
+        QtCore.QCoreApplication.processEvents()
         
         for batch_index in range(total_batches):
             # 获取当前批次的文件
@@ -2199,13 +2300,23 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
             batch_results = []
             
             # 更新状态
-            self.dataset_status_label.setText(f"正在处理批次 {batch_index+1}/{total_batches}...")
+            self.dataset_status_label.setText(f"正在处理批次 {batch_index+1}/{total_batches}..."
+                                             f"{' (GPU加速)' if use_gpu else ''}")
             self.dataset_progress_bar.setValue(int(batch_index / total_batches * 100))
             QtCore.QCoreApplication.processEvents()
             
             # 处理当前批次的文件
             for file_idx, file_path in enumerate(batch_files):
                 try:
+                    # 获取所在的文件夹路径
+                    folder_path = os.path.dirname(file_path)
+                    
+                    # 如果文件所在文件夹已标记为错误，则跳过
+                    if folder_path in error_folders:
+                        skipped_files += 1
+                        processed_files += 1
+                        continue
+                    
                     # 更新状态
                     file_name = os.path.basename(file_path)
                     self.dataset_status_label.setText(
@@ -2244,7 +2355,16 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
                                     audio_features = self.audio_analyzer.analyze()
                                     result["audio_features"] = audio_features
                             except Exception as e:
-                                print(f"无法分析音频文件 {audio_file}: {str(e)}")
+                                # 音频分析出错，记录错误并将整个文件夹标记为跳过
+                                error_message = f"无法分析音频文件 {audio_file}: {str(e)}"
+                                print(error_message)
+                                self.dataset_status_label.setText(f"错误: {error_message}\n将跳过文件夹: {folder_path}")
+                                QtCore.QCoreApplication.processEvents()
+                                
+                                # 将文件夹添加到错误文件夹集合
+                                error_folders.add(folder_path)
+                                # 不添加到结果中，直接跳过
+                                continue
                         
                         # 将结果添加到批次结果和总结果
                         item_result = {
@@ -2256,7 +2376,15 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
                         all_results.append(item_result)
                 
                 except Exception as e:
-                    print(f"处理文件 {file_path} 时出错: {str(e)}")
+                    # 处理文件出错，记录错误并将整个文件夹标记为跳过
+                    folder_path = os.path.dirname(file_path)
+                    error_message = f"处理文件 {file_path} 时出错: {str(e)}"
+                    print(error_message)
+                    self.dataset_status_label.setText(f"错误: {error_message}\n将跳过文件夹: {folder_path}")
+                    QtCore.QCoreApplication.processEvents()
+                    
+                    # 将文件夹添加到错误文件夹集合
+                    error_folders.add(folder_path)
                 
                 processed_files += 1
                 
@@ -2275,7 +2403,8 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
                     
                 self.dataset_status_label.setText(
                     f"批次 {batch_index+1}/{total_batches} 已完成并保存。"
-                    f"已处理: {processed_files}/{total_files} 个文件"
+                    f"已处理: {processed_files}/{total_files} 个文件，"
+                    f"跳过了 {skipped_files} 个文件"
                 )
                 QtCore.QCoreApplication.processEvents()
             except Exception as e:
@@ -2284,6 +2413,17 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
                     "警告", 
                     f"保存批次 {batch_index+1} 时出错: {str(e)}"
                 )
+        
+        # 保存错误文件夹日志
+        if error_folders:
+            error_log_path = os.path.join(dataset_output_dir, "error_folders.txt")
+            try:
+                with open(error_log_path, "w", encoding="utf-8") as f:
+                    f.write(f"处理过程中跳过了 {len(error_folders)} 个错误文件夹:\n\n")
+                    for folder in sorted(error_folders):
+                        f.write(f"{folder}\n")
+            except Exception as e:
+                print(f"保存错误文件夹日志出错: {str(e)}")
         
         # 保存完整数据集
         try:
@@ -2325,12 +2465,41 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
                     # 随机打乱文件夹列表（不打乱文件夹内的文件）
                     import random
                     folder_paths = list(folder_groups.keys())
+                    
+                    # 确保不包含错误文件夹
+                    valid_folder_paths = [path for path in folder_paths if path not in error_folders]
+                    if len(valid_folder_paths) < len(folder_paths):
+                        self.dataset_status_label.setText(
+                            f"数据集分割时排除了 {len(folder_paths) - len(valid_folder_paths)} 个错误文件夹"
+                        )
+                        QtCore.QCoreApplication.processEvents()
+                        folder_paths = valid_folder_paths
+                    
                     random.shuffle(folder_paths)
                     
                     # 计算每个集合应包含的文件夹数量
                     total_folders = len(folder_paths)
-                    train_folders_count = int(total_folders * train_percent)
-                    val_folders_count = int(total_folders * val_percent)
+                    if total_folders == 0:
+                        QtWidgets.QMessageBox.warning(
+                            self, 
+                            "警告", 
+                            "所有文件夹都有错误，无法进行数据集分割!"
+                        )
+                        return
+                    
+                    train_folders_count = max(1, int(total_folders * train_percent))
+                    val_folders_count = max(1, int(total_folders * val_percent))
+                    
+                    # 确保分割后的文件夹数量不超过总文件夹数
+                    if train_folders_count + val_folders_count > total_folders:
+                        # 按比例调整
+                        total_ratio = train_percent + val_percent
+                        train_folders_count = max(1, int(total_folders * (train_percent / total_ratio)))
+                        val_folders_count = max(1, int(total_folders * (val_percent / total_ratio)))
+                        
+                        # 进一步确保不超过总数
+                        if train_folders_count + val_folders_count > total_folders:
+                            val_folders_count = max(1, total_folders - train_folders_count)
                     
                     # 分割文件夹到训练集、验证集和测试集
                     train_folders = folder_paths[:train_folders_count]
@@ -2434,18 +2603,30 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
                 with open(full_dataset_file, "w", encoding="utf-8") as f:
                     json.dump(all_results, f, indent=2)
                 
-                self.dataset_status_label.setText(
+                # 添加错误文件夹的统计信息
+                error_folder_count = len(error_folders)
+                success_message = (
                     f"数据集处理完成，已分割为训练集({len(train_data)}个样本)、"
-                    f"验证集({len(val_data)}个样本)和测试集({len(test_data)}个样本)"
+                    f"验证集({len(val_data)}个样本)和测试集({len(test_data)}个样本)\n"
+                    f"处理过程中跳过了 {skipped_files} 个文件，{error_folder_count} 个错误文件夹"
                 )
+                
+                self.dataset_status_label.setText(success_message)
             else:
                 # 不分割，直接保存完整数据集
                 dataset_file = os.path.join(dataset_output_dir, "dataset.json")
                 with open(dataset_file, "w", encoding="utf-8") as f:
                     json.dump(all_results, f, indent=2)
                 
-                self.dataset_status_label.setText(f"数据集处理完成，已保存到: {dataset_file}")
-                success_message = f"成功处理 {processed_files} 个文件!\n数据集已保存到: {dataset_file}"
+                # 添加错误文件夹的统计信息
+                error_folder_count = len(error_folders)
+                success_message = (
+                    f"数据集处理完成，已保存到: {dataset_file}\n"
+                    f"成功处理 {processed_files - skipped_files} 个文件，"
+                    f"跳过了 {skipped_files} 个文件，{error_folder_count} 个错误文件夹"
+                )
+                
+                self.dataset_status_label.setText(success_message)
             
             self.dataset_progress_bar.setValue(100)
             

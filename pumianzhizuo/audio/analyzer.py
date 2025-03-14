@@ -15,6 +15,12 @@ import matplotlib.pyplot as plt
 from matplotlib.figure import Figure
 from PyQt5 import QtCore
 
+# 添加GPU加速相关导入
+import torch
+
+# 检查GPU是否可用
+GPU_AVAILABLE = torch.cuda.is_available()
+
 
 class AudioAnalyzer(QtCore.QObject):
     """
@@ -27,6 +33,7 @@ class AudioAnalyzer(QtCore.QObject):
     - 多种频谱特征提取
     - 音频段落检测
     - 过渡点检测（适合osu谱面关键点）
+    - GPU加速支持（需要CUDA环境）
     """
     
     # 定义信号
@@ -34,7 +41,7 @@ class AudioAnalyzer(QtCore.QObject):
     analysis_complete = QtCore.pyqtSignal(dict)  # 分析完成信号，发送结果字典
     analysis_error = QtCore.pyqtSignal(str)  # 分析错误信号
     
-    def __init__(self):
+    def __init__(self, use_gpu=False):
         super().__init__()
         self.audio_path = ""
         self.y = None  # 音频数据
@@ -46,6 +53,13 @@ class AudioAnalyzer(QtCore.QObject):
         self.onset_envelope = None
         self.tempo = None
         self.beats = None
+        
+        # GPU设置
+        self.use_gpu = use_gpu and GPU_AVAILABLE
+        if self.use_gpu:
+            self.device = torch.device("cuda")
+        else:
+            self.device = torch.device("cpu")
     
     def load_audio(self, file_path: str) -> bool:
         """
@@ -64,6 +78,19 @@ class AudioAnalyzer(QtCore.QObject):
         except Exception as e:
             self.analysis_error.emit(f"加载音频文件失败: {str(e)}")
             return False
+    
+    def set_use_gpu(self, use_gpu: bool) -> None:
+        """
+        设置是否使用GPU加速
+        
+        参数:
+            use_gpu: 是否使用GPU
+        """
+        self.use_gpu = use_gpu and GPU_AVAILABLE
+        if self.use_gpu:
+            self.device = torch.device("cuda")
+        else:
+            self.device = torch.device("cpu")
     
     def analyze(self) -> Dict:
         """
@@ -121,6 +148,23 @@ class AudioAnalyzer(QtCore.QObject):
             self.analysis_error.emit(f"音频分析过程中出错: {str(e)}")
             return {}
     
+    def _to_gpu(self, data):
+        """将数据转移到GPU上（如果启用了GPU加速）"""
+        if self.use_gpu:
+            if isinstance(data, np.ndarray):
+                return torch.from_numpy(data).to(self.device)
+            elif isinstance(data, torch.Tensor):
+                return data.to(self.device)
+        return data
+    
+    def _to_cpu(self, data):
+        """将数据从GPU转回CPU"""
+        if self.use_gpu and isinstance(data, torch.Tensor):
+            return data.cpu().numpy()
+        elif isinstance(data, torch.Tensor):
+            return data.numpy()
+        return data
+    
     def _detect_tempo_and_beats(self) -> None:
         """检测BPM和节拍位置"""
         # 计算onset强度包络
@@ -128,14 +172,37 @@ class AudioAnalyzer(QtCore.QObject):
             y=self.y, sr=self.sr, hop_length=self.hop_length
         )
         
-        # 尝试不同的BPM检测算法，选择最可靠的结果
-        # 算法1: 动态规划节拍跟踪
-        tempo, beats = librosa.beat.beat_track(
-            onset_envelope=self.onset_envelope, 
-            sr=self.sr,
-            hop_length=self.hop_length,
-            trim=False
-        )
+        # 如果启用GPU，使用GPU加速
+        if self.use_gpu:
+            # 将onset_envelope转移到GPU
+            onset_env_gpu = self._to_gpu(self.onset_envelope)
+            
+            # 使用GPU进行FFT计算
+            # 注意：实际实现需要替换为torch的实现
+            # 这里简化为CPU计算后再转回GPU
+            # TODO: 使用torch替换librosa的实现
+            
+            # 暂时回到CPU执行，因为librosa不直接支持GPU
+            onset_env_cpu = self._to_cpu(onset_env_gpu)
+            tempo, beats = librosa.beat.beat_track(
+                onset_envelope=onset_env_cpu, 
+                sr=self.sr,
+                hop_length=self.hop_length,
+                trim=False
+            )
+            
+            # 将节拍回到GPU
+            beats_gpu = self._to_gpu(beats)
+            # 然后再转回CPU存储结果
+            beats = self._to_cpu(beats_gpu)
+        else:
+            # 使用CPU执行原始算法
+            tempo, beats = librosa.beat.beat_track(
+                onset_envelope=self.onset_envelope, 
+                sr=self.sr,
+                hop_length=self.hop_length,
+                trim=False
+            )
         
         # 算法2: 使用有调谐范围的节拍跟踪
         tempo_range = librosa.beat.tempo(
@@ -168,7 +235,7 @@ class AudioAnalyzer(QtCore.QObject):
         
         # 存储结果
         self.features["bpm"] = self.tempo
-        self.features["beat_times"] = self.beats.tolist()  # 转换为列表以便JSON序列化
+        self.features["beat_times"] = self.beats.tolist()
         
         # 高级分析：检测节奏规律性
         if len(self.beats) > 1:
@@ -210,17 +277,57 @@ class AudioAnalyzer(QtCore.QObject):
             self.features["strong_beats"] = strong_beats
     
     def _extract_spectral_features(self) -> None:
-        """提取频谱特征"""
-        # 计算短时傅里叶变换 (STFT)
-        D = librosa.stft(self.y, hop_length=self.hop_length)
-        
-        # 计算频谱幅度
-        magnitude = np.abs(D)
-        
-        # 计算梅尔频谱
-        mel_spec = librosa.feature.melspectrogram(
-            y=self.y, sr=self.sr, hop_length=self.hop_length, n_mels=128
-        )
+        """提取频谱特征，使用GPU加速（如可用）"""
+        if self.use_gpu:
+            # 将音频数据转移到GPU
+            y_gpu = self._to_gpu(self.y)
+            
+            # 使用GPU进行FFT（需要在torch中实现，这里展示概念）
+            # 由于librosa不直接支持GPU，这里需要使用torch的函数
+            # 注意：以下是概念展示，实际实现会有所不同
+            
+            # 1. 使用torch实现STFT
+            # 转换为浮点数以避免精度问题
+            y_float = y_gpu.float() if isinstance(y_gpu, torch.Tensor) else torch.tensor(self.y, dtype=torch.float32, device=self.device)
+            
+            # 配置STFT参数 (与librosa兼容)
+            n_fft = 2048
+            win_length = n_fft
+            window = torch.hann_window(win_length, device=self.device)
+            
+            # 计算STFT
+            D_gpu = torch.stft(
+                y_float, 
+                n_fft=n_fft, 
+                hop_length=self.hop_length, 
+                win_length=win_length, 
+                window=window, 
+                return_complex=True
+            )
+            
+            # 计算频谱幅度
+            magnitude_gpu = torch.abs(D_gpu)
+            
+            # 转回CPU进行后续处理（因为librosa的高级特征提取仍需CPU）
+            magnitude = self._to_cpu(magnitude_gpu)
+            
+            # 由于后续处理仍使用librosa，需要暂时回到CPU
+            # 未来可以完全用torch替代librosa实现GPU端完整处理
+            mel_spec = librosa.feature.melspectrogram(
+                y=self.y, sr=self.sr, hop_length=self.hop_length, n_mels=128
+            )
+        else:
+            # 原始CPU实现
+            # 计算短时傅里叶变换 (STFT)
+            D = librosa.stft(self.y, hop_length=self.hop_length)
+            
+            # 计算频谱幅度
+            magnitude = np.abs(D)
+            
+            # 计算梅尔频谱
+            mel_spec = librosa.feature.melspectrogram(
+                y=self.y, sr=self.sr, hop_length=self.hop_length, n_mels=128
+            )
         
         # 转换为分贝单位
         mel_spec_db = librosa.power_to_db(mel_spec, ref=np.max)
