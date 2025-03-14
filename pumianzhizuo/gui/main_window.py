@@ -859,37 +859,53 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
         # 设置模型训练选项卡内容
         training_layout = QtWidgets.QVBoxLayout(model_training_tab)
         
+        # 创建滚动区域，确保在窗口较小时能显示所有内容
+        training_scroll_area = QtWidgets.QScrollArea()
+        training_scroll_area.setWidgetResizable(True)
+        training_scroll_area.setFrameShape(QtWidgets.QFrame.NoFrame)
+        
+        # 创建滚动区域的内容容器
+        training_scroll_content = QtWidgets.QWidget()
+        training_scroll_layout = QtWidgets.QVBoxLayout(training_scroll_content)
+        training_scroll_layout.setSpacing(15)
+        
         # 训练数据设置
         training_data_group = QtWidgets.QGroupBox("训练数据设置")
         training_data_layout = QtWidgets.QGridLayout(training_data_group)
         
-        # 训练数据集选择
-        training_data_label = QtWidgets.QLabel("训练数据集:")
-        self.training_data_path = QtWidgets.QLineEdit()
-        self.training_data_path.setPlaceholderText("请选择训练数据集文件夹...")
+        # 数据集目录选择
+        dataset_root_label = QtWidgets.QLabel("数据集根目录:")
+        self.dataset_root_path = QtWidgets.QLineEdit()
+        self.dataset_root_path.setPlaceholderText("请选择包含train/val/test子文件夹的数据集目录...")
         
-        browse_training_data_btn = QtWidgets.QPushButton("浏览")
-        browse_training_data_btn.clicked.connect(self.browse_training_data)
+        browse_dataset_root_btn = QtWidgets.QPushButton("浏览")
+        browse_dataset_root_btn.clicked.connect(self.browse_dataset_root)
         
-        training_data_layout.addWidget(training_data_label, 0, 0)
-        training_data_path_layout = QtWidgets.QHBoxLayout()
-        training_data_path_layout.addWidget(self.training_data_path, 3)
-        training_data_path_layout.addWidget(browse_training_data_btn, 1)
-        training_data_layout.addLayout(training_data_path_layout, 0, 1)
+        training_data_layout.addWidget(dataset_root_label, 0, 0)
+        dataset_root_path_layout = QtWidgets.QHBoxLayout()
+        dataset_root_path_layout.addWidget(self.dataset_root_path, 3)
+        dataset_root_path_layout.addWidget(browse_dataset_root_btn, 1)
+        training_data_layout.addLayout(dataset_root_path_layout, 0, 1)
         
-        # 验证数据集选择
-        validation_data_label = QtWidgets.QLabel("验证数据集:")
-        self.validation_data_path = QtWidgets.QLineEdit()
-        self.validation_data_path.setPlaceholderText("请选择验证数据集文件夹...")
+        # 展示检测到的子文件夹信息
+        subfolders_info_label = QtWidgets.QLabel("检测到的子文件夹:")
+        self.train_folder_label = QtWidgets.QLabel("训练集: 未检测")
+        self.val_folder_label = QtWidgets.QLabel("验证集: 未检测")
+        self.test_folder_label = QtWidgets.QLabel("测试集: 未检测")
         
-        browse_validation_data_btn = QtWidgets.QPushButton("浏览")
-        browse_validation_data_btn.clicked.connect(self.browse_validation_data)
+        # 设置状态标签样式
+        status_style_detected = "color: green; font-weight: bold;"
+        status_style_missing = "color: red;"
+        self.train_folder_label.setStyleSheet(status_style_missing)
+        self.val_folder_label.setStyleSheet(status_style_missing)
+        self.test_folder_label.setStyleSheet(status_style_missing)
         
-        training_data_layout.addWidget(validation_data_label, 1, 0)
-        validation_data_path_layout = QtWidgets.QHBoxLayout()
-        validation_data_path_layout.addWidget(self.validation_data_path, 3)
-        validation_data_path_layout.addWidget(browse_validation_data_btn, 1)
-        training_data_layout.addLayout(validation_data_path_layout, 1, 1)
+        training_data_layout.addWidget(subfolders_info_label, 1, 0)
+        subfolders_info_layout = QtWidgets.QVBoxLayout()
+        subfolders_info_layout.addWidget(self.train_folder_label)
+        subfolders_info_layout.addWidget(self.val_folder_label)
+        subfolders_info_layout.addWidget(self.test_folder_label)
+        training_data_layout.addLayout(subfolders_info_layout, 1, 1)
         
         # 模型输出路径
         model_output_label = QtWidgets.QLabel("模型保存路径:")
@@ -905,16 +921,19 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
         model_output_path_layout.addWidget(browse_model_output_btn, 1)
         training_data_layout.addLayout(model_output_path_layout, 2, 1)
         
-        training_layout.addWidget(training_data_group)
+        training_scroll_layout.addWidget(training_data_group)
         
         # 模型训练参数
         training_params_group = QtWidgets.QGroupBox("训练参数")
         training_params_layout = QtWidgets.QGridLayout(training_params_group)
+        training_params_layout.setVerticalSpacing(10)  # 增加垂直间距，使布局更清晰
+        training_params_layout.setHorizontalSpacing(10)  # 增加水平间距
         
         # 模型架构选择
         model_architecture_label = QtWidgets.QLabel("模型架构:")
         self.model_architecture_combo = QtWidgets.QComboBox()
         self.model_architecture_combo.addItems(["Transformer", "LSTM", "GRU", "混合模型"])
+        self.model_architecture_combo.setMinimumWidth(120)  # 设置最小宽度
         training_params_layout.addWidget(model_architecture_label, 0, 0)
         training_params_layout.addWidget(self.model_architecture_combo, 0, 1)
         
@@ -924,6 +943,7 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
         self.batch_size_spin.setRange(1, 256)
         self.batch_size_spin.setValue(16)
         self.batch_size_spin.setSingleStep(2)
+        self.batch_size_spin.setMinimumWidth(80)  # 设置最小宽度
         training_params_layout.addWidget(batch_size_label, 1, 0)
         training_params_layout.addWidget(self.batch_size_spin, 1, 1)
         
@@ -932,6 +952,7 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
         self.learning_rate_combo = QtWidgets.QComboBox()
         self.learning_rate_combo.addItems(["0.0001", "0.0005", "0.001", "0.003", "0.01"])
         self.learning_rate_combo.setCurrentIndex(2)  # 默认选择0.001
+        self.learning_rate_combo.setMinimumWidth(80)  # 设置最小宽度
         training_params_layout.addWidget(learning_rate_label, 2, 0)
         training_params_layout.addWidget(self.learning_rate_combo, 2, 1)
         
@@ -940,12 +961,14 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
         self.epochs_spin = QtWidgets.QSpinBox()
         self.epochs_spin.setRange(1, 1000)
         self.epochs_spin.setValue(50)
+        self.epochs_spin.setMinimumWidth(80)  # 设置最小宽度
         training_params_layout.addWidget(epochs_label, 3, 0)
         training_params_layout.addWidget(self.epochs_spin, 3, 1)
         
         # GPU设置
         gpu_group = QtWidgets.QGroupBox("GPU设置")
         gpu_layout = QtWidgets.QVBoxLayout(gpu_group)
+        gpu_layout.setSpacing(8)  # 减小控件间距
         
         # 检测可用GPU
         self.available_gpus = []
@@ -962,6 +985,7 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
         # GPU状态标签
         self.gpu_status_label = QtWidgets.QLabel(gpu_status)
         self.gpu_status_label.setStyleSheet("color: #0066CC;")
+        self.gpu_status_label.setWordWrap(True)  # 允许文字自动换行
         gpu_layout.addWidget(self.gpu_status_label)
         
         # 使用GPU复选框
@@ -974,8 +998,10 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
         
         # GPU设备选择
         gpu_device_layout = QtWidgets.QHBoxLayout()
+        gpu_device_layout.setSpacing(5)  # 减小控件间距
         gpu_device_label = QtWidgets.QLabel("GPU设备:")
         self.gpu_device_combo = QtWidgets.QComboBox()
+        self.gpu_device_combo.setSizeAdjustPolicy(QtWidgets.QComboBox.AdjustToContents)  # 根据内容调整大小
         if self.available_gpus:
             self.gpu_device_combo.addItems(self.available_gpus)
         else:
@@ -983,7 +1009,7 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
         self.gpu_device_combo.setEnabled(gpu_available and self.use_gpu_checkbox.isChecked())
         
         gpu_device_layout.addWidget(gpu_device_label)
-        gpu_device_layout.addWidget(self.gpu_device_combo)
+        gpu_device_layout.addWidget(self.gpu_device_combo, 1)  # 给combobox分配更多空间
         gpu_layout.addLayout(gpu_device_layout)
         
         # 添加到训练参数布局
@@ -1003,16 +1029,18 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
         self.use_mixed_precision.setEnabled(gpu_available and self.use_gpu_checkbox.isChecked())
         training_params_layout.addWidget(self.use_mixed_precision, 7, 0, 1, 2)
         
-        training_layout.addWidget(training_params_group)
+        training_scroll_layout.addWidget(training_params_group)
         
         # 训练操作区
         training_actions_group = QtWidgets.QGroupBox("训练操作")
         training_actions_layout = QtWidgets.QVBoxLayout(training_actions_group)
+        training_actions_layout.setSpacing(10)  # 设置布局间距
         
         # 训练进度条
         self.training_progress_bar = QtWidgets.QProgressBar()
         self.training_progress_bar.setRange(0, 100)
         self.training_progress_bar.setValue(0)
+        self.training_progress_bar.setMinimumHeight(20)  # 设置最小高度
         
         # 训练状态显示
         self.training_status_label = QtWidgets.QLabel("准备训练")
@@ -1021,7 +1049,8 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
         # 训练日志区域
         self.training_log = QtWidgets.QTextEdit()
         self.training_log.setReadOnly(True)
-        self.training_log.setMinimumHeight(150)
+        self.training_log.setMinimumHeight(120)  # 减少最小高度以适应小窗口
+        self.training_log.setMaximumHeight(200)  # 设置最大高度，避免占用过多空间
         self.training_log.setStyleSheet("""
             QTextEdit {
                 background-color: #F8F8F8;
@@ -1032,27 +1061,40 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
             }
         """)
         
+        # 添加初始日志信息
+        self.training_log.append("请选择数据集根目录，系统将自动检测训练、验证和测试集子文件夹")
+        self.training_log.append("数据集应包含train、val和test子文件夹")
+        
         # 训练损失曲线图
         self.training_plot_widget = QtWidgets.QWidget()
         self.training_plot_layout = QtWidgets.QVBoxLayout(self.training_plot_widget)
+        self.training_plot_widget.setMinimumHeight(150)  # 设置最小高度
+        self.training_plot_widget.setMaximumHeight(250)  # 设置最大高度
         
         # 操作按钮
         training_buttons_layout = QtWidgets.QHBoxLayout()
+        training_buttons_layout.setSpacing(8)  # 减小按钮间距
         
         self.start_training_btn = QtWidgets.QPushButton("开始训练")
         self.start_training_btn.clicked.connect(self.start_training)
+        self.start_training_btn.setMinimumWidth(80)  # 设置最小宽度
+        self.start_training_btn.setEnabled(False)  # 初始状态下禁用，直到检测到有效的数据集
         
         self.pause_resume_btn = QtWidgets.QPushButton("暂停训练")
         self.pause_resume_btn.clicked.connect(self.toggle_training_pause)
         self.pause_resume_btn.setEnabled(False)
+        self.pause_resume_btn.setMinimumWidth(80)  # 设置最小宽度
         
         self.stop_training_btn = QtWidgets.QPushButton("停止训练")
         self.stop_training_btn.clicked.connect(self.stop_training)
         self.stop_training_btn.setEnabled(False)
+        self.stop_training_btn.setMinimumWidth(80)  # 设置最小宽度
         
         self.export_model_btn = QtWidgets.QPushButton("导出模型")
         self.export_model_btn.clicked.connect(self.export_model)
+        self.export_model_btn.setMinimumWidth(80)  # 设置最小宽度
         
+        # 添加按钮到布局
         training_buttons_layout.addWidget(self.start_training_btn)
         training_buttons_layout.addWidget(self.pause_resume_btn)
         training_buttons_layout.addWidget(self.stop_training_btn)
@@ -1064,7 +1106,11 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
         training_actions_layout.addWidget(self.training_plot_widget)
         training_actions_layout.addLayout(training_buttons_layout)
         
-        training_layout.addWidget(training_actions_group)
+        training_scroll_layout.addWidget(training_actions_group)
+        
+        # 设置滚动区域的内容并添加到主布局
+        training_scroll_area.setWidget(training_scroll_content)
+        training_layout.addWidget(training_scroll_area)
         
         # 设置设置选项卡内容
         settings_layout = QtWidgets.QVBoxLayout(settings_tab)
@@ -2583,30 +2629,6 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
                 self.val_percent_spin.blockSignals(False)
 
     # 模型训练部分的方法开始
-    def browse_training_data(self):
-        """浏览训练数据集文件夹"""
-        folder_path = QtWidgets.QFileDialog.getExistingDirectory(
-            self, "选择训练数据集文件夹", os.path.expanduser("~")
-        )
-        if folder_path:
-            self.training_data_path.setText(folder_path)
-    
-    def browse_validation_data(self):
-        """浏览验证数据集文件夹"""
-        folder_path = QtWidgets.QFileDialog.getExistingDirectory(
-            self, "选择验证数据集文件夹", os.path.expanduser("~")
-        )
-        if folder_path:
-            self.validation_data_path.setText(folder_path)
-    
-    def browse_model_output(self):
-        """浏览模型保存路径"""
-        folder_path = QtWidgets.QFileDialog.getExistingDirectory(
-            self, "选择模型保存路径", os.path.expanduser("~")
-        )
-        if folder_path:
-            self.model_output_path.setText(folder_path)
-    
     def start_training(self):
         """开始训练模型"""
         # 检查是否安装了PyTorch
@@ -2619,16 +2641,20 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
             return
             
         # 检查输入
-        training_data_path = self.training_data_path.text().strip()
-        validation_data_path = self.validation_data_path.text().strip()
+        dataset_root_path = self.dataset_root_path.text().strip()
         model_output_path = self.model_output_path.text().strip()
         
-        if not training_data_path or not os.path.isdir(training_data_path):
-            QtWidgets.QMessageBox.warning(self, "警告", "请选择有效的训练数据集文件夹!")
+        if not dataset_root_path or not os.path.isdir(dataset_root_path):
+            QtWidgets.QMessageBox.warning(self, "警告", "请选择有效的数据集根目录!")
             return
             
-        if self.use_early_stopping.isChecked() and (not validation_data_path or not os.path.isdir(validation_data_path)):
-            QtWidgets.QMessageBox.warning(self, "警告", "使用早停功能需要有效的验证数据集!")
+        # 检查是否已检测到必要的子文件夹
+        if not hasattr(self, 'train_data_path') or not self.train_data_path or not os.path.isdir(self.train_data_path):
+            QtWidgets.QMessageBox.warning(self, "警告", "未检测到训练集文件夹(train)，请选择包含训练数据的正确目录!")
+            return
+            
+        if self.use_early_stopping.isChecked() and (not hasattr(self, 'val_data_path') or not self.val_data_path or not os.path.isdir(self.val_data_path)):
+            QtWidgets.QMessageBox.warning(self, "警告", "使用早停功能需要验证集文件夹(val)，请选择包含验证数据的正确目录!")
             return
             
         if not model_output_path or not os.path.isdir(model_output_path):
@@ -2659,6 +2685,10 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
         # 显示训练配置确认对话框
         config_msg = f"""
 训练配置:
+- 数据集根目录: {dataset_root_path}
+- 训练集: {os.path.basename(self.train_data_path)}
+- 验证集: {os.path.basename(self.val_data_path) if hasattr(self, 'val_data_path') and self.val_data_path else "无"}
+- 测试集: {os.path.basename(self.test_data_path) if hasattr(self, 'test_data_path') and self.test_data_path else "无"}
 - 模型架构: {model_architecture}
 - 批次大小: {batch_size}
 - 学习率: {learning_rate}
@@ -2711,8 +2741,9 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
         # 创建训练参数字典
         training_params = {
             'model_architecture': model_architecture,
-            'training_data_path': training_data_path,
-            'validation_data_path': validation_data_path,
+            'training_data_path': self.train_data_path,
+            'validation_data_path': self.val_data_path if hasattr(self, 'val_data_path') else "",
+            'test_data_path': self.test_data_path if hasattr(self, 'test_data_path') else "",
             'model_output_path': model_output_path,
             'batch_size': batch_size,
             'learning_rate': learning_rate,
@@ -2951,6 +2982,68 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
         self.gpu_device_combo.setEnabled(state)
         self.use_mixed_precision.setEnabled(state)
         # 注意：不要禁用use_gpu_checkbox本身，否则无法重新启用
+
+    def browse_dataset_root(self):
+        """浏览数据集根目录并自动检测子文件夹"""
+        folder_path = QtWidgets.QFileDialog.getExistingDirectory(
+            self, "选择数据集根目录", os.path.expanduser("~")
+        )
+        if folder_path:
+            self.dataset_root_path.setText(folder_path)
+            
+            # 自动检测数据集子文件夹
+            self.detect_dataset_subfolders(folder_path)
+    
+    def browse_model_output(self):
+        """浏览模型保存路径"""
+        folder_path = QtWidgets.QFileDialog.getExistingDirectory(
+            self, "选择模型保存路径", os.path.expanduser("~")
+        )
+        if folder_path:
+            self.model_output_path.setText(folder_path)
+    
+    def detect_dataset_subfolders(self, root_path):
+        """检测数据集根目录中的train/val/test子文件夹"""
+        # 定义要检测的子文件夹名称
+        subfolders = {
+            "train": {"label": self.train_folder_label, "detected": False, "path": ""},
+            "val": {"label": self.val_folder_label, "detected": False, "path": ""},
+            "test": {"label": self.test_folder_label, "detected": False, "path": ""}
+        }
+        
+        # 设置状态标签样式
+        status_style_detected = "color: green; font-weight: bold;"
+        status_style_missing = "color: red;"
+        
+        # 检查子文件夹是否存在
+        for subfolder_name, info in subfolders.items():
+            subfolder_path = os.path.join(root_path, subfolder_name)
+            if os.path.isdir(subfolder_path):
+                info["detected"] = True
+                info["path"] = subfolder_path
+                info["label"].setText(f"{subfolder_name.capitalize()}: 已检测 ({os.path.basename(root_path)}/{subfolder_name})")
+                info["label"].setStyleSheet(status_style_detected)
+            else:
+                info["label"].setText(f"{subfolder_name.capitalize()}: 未检测")
+                info["label"].setStyleSheet(status_style_missing)
+        
+        # 将检测到的路径存储为属性，供训练时使用
+        self.train_data_path = subfolders["train"]["path"]
+        self.val_data_path = subfolders["val"]["path"]
+        self.test_data_path = subfolders["test"]["path"]
+        
+        # 更新训练界面状态
+        if subfolders["train"]["detected"] and subfolders["val"]["detected"]:
+            self.add_training_log("数据集子文件夹检测成功")
+            # 允许启动训练
+            self.start_training_btn.setEnabled(True)
+        else:
+            if not subfolders["train"]["detected"]:
+                self.add_training_log("警告: 未检测到训练集文件夹 (train)")
+            if not subfolders["val"]["detected"]:
+                self.add_training_log("警告: 未检测到验证集文件夹 (val)")
+            # 如果缺少必要的子文件夹，禁用训练按钮
+            self.start_training_btn.setEnabled(False)
 
 def main():
     """程序入口函数"""
