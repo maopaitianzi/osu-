@@ -735,6 +735,64 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
         dataset_params_layout.addWidget(files_limit_label, 2, 0)
         dataset_params_layout.addWidget(self.files_limit_spin, 2, 1)
         
+        # 数据集分割设置
+        dataset_split_label = QtWidgets.QLabel("数据集分割:")
+        dataset_split_layout = QtWidgets.QHBoxLayout()
+        
+        self.enable_split_check = QtWidgets.QCheckBox("启用分割")
+        dataset_split_layout.addWidget(self.enable_split_check)
+        
+        train_label = QtWidgets.QLabel("训练集:")
+        self.train_percent_spin = QtWidgets.QSpinBox()
+        self.train_percent_spin.setRange(10, 90)
+        self.train_percent_spin.setValue(70)
+        self.train_percent_spin.setSuffix("%")
+        dataset_split_layout.addWidget(train_label)
+        dataset_split_layout.addWidget(self.train_percent_spin)
+        
+        val_label = QtWidgets.QLabel("验证集:")
+        self.val_percent_spin = QtWidgets.QSpinBox()
+        self.val_percent_spin.setRange(5, 30)
+        self.val_percent_spin.setValue(15)
+        self.val_percent_spin.setSuffix("%")
+        dataset_split_layout.addWidget(val_label)
+        dataset_split_layout.addWidget(self.val_percent_spin)
+        
+        test_label = QtWidgets.QLabel("测试集:")
+        self.test_percent_spin = QtWidgets.QSpinBox()
+        self.test_percent_spin.setRange(5, 30)
+        self.test_percent_spin.setValue(15)
+        self.test_percent_spin.setSuffix("%")
+        dataset_split_layout.addWidget(test_label)
+        dataset_split_layout.addWidget(self.test_percent_spin)
+        
+        # 确保百分比总和为100%
+        self.train_percent_spin.valueChanged.connect(self.adjust_split_percentages)
+        self.val_percent_spin.valueChanged.connect(self.adjust_split_percentages)
+        self.test_percent_spin.valueChanged.connect(self.adjust_split_percentages)
+        
+        dataset_params_layout.addWidget(dataset_split_label, 3, 0)
+        dataset_params_layout.addLayout(dataset_split_layout, 3, 1)
+        
+        # 分割方式选择
+        split_method_label = QtWidgets.QLabel("分割方式:")
+        self.split_method_combo = QtWidgets.QComboBox()
+        self.split_method_combo.addItems(["按文件夹分割", "随机分割"])
+        self.split_method_combo.setToolTip("按文件夹分割会保持同一文件夹中的谱面在同一数据集中")
+        
+        dataset_params_layout.addWidget(split_method_label, 4, 0)
+        dataset_params_layout.addWidget(self.split_method_combo, 4, 1)
+        
+        # 批处理设置
+        batch_size_label = QtWidgets.QLabel("批处理大小:")
+        self.batch_size_spin = QtWidgets.QSpinBox()
+        self.batch_size_spin.setRange(1, 100)
+        self.batch_size_spin.setValue(10)
+        self.batch_size_spin.setToolTip("每批处理的文件数量，较小的值可以减少内存占用但会增加处理时间")
+        
+        dataset_params_layout.addWidget(batch_size_label, 5, 0)
+        dataset_params_layout.addWidget(self.batch_size_spin, 5, 1)
+        
         # 输出文件夹设置
         output_folder_label = QtWidgets.QLabel("输出文件夹:")
         self.dataset_output_path = QtWidgets.QLineEdit()
@@ -751,8 +809,8 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
         output_folder_layout.addWidget(self.dataset_output_path, 3)
         output_folder_layout.addWidget(browse_output_btn, 1)
         
-        dataset_params_layout.addWidget(output_folder_label, 3, 0)
-        dataset_params_layout.addLayout(output_folder_layout, 3, 1)
+        dataset_params_layout.addWidget(output_folder_label, 6, 0)
+        dataset_params_layout.addLayout(output_folder_layout, 6, 1)
         
         dataset_layout.addWidget(dataset_params_group)
         
@@ -2069,6 +2127,10 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
         dataset_output_dir = os.path.join(output_path, "beatmap_dataset")
         os.makedirs(dataset_output_dir, exist_ok=True)
         
+        # 创建临时批次目录
+        batches_dir = os.path.join(dataset_output_dir, "batches")
+        os.makedirs(batches_dir, exist_ok=True)
+        
         # 获取所有文件路径
         beatmap_files = []
         for i in range(self.dataset_files_list.count()):
@@ -2076,73 +2138,273 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
         
         total_files = len(beatmap_files)
         processed_files = 0
-        
-        # 处理文件
         all_results = []
         
-        for file_path in beatmap_files:
-            try:
-                # 更新状态
-                self.dataset_status_label.setText(f"正在处理文件 ({processed_files+1}/{total_files}): {os.path.basename(file_path)}")
-                self.dataset_progress_bar.setValue(int(processed_files / total_files * 100))
-                QtCore.QCoreApplication.processEvents()
-                
-                # 加载谱面文件
-                if self.beatmap_analyzer.load_beatmap(file_path):
-                    # 分析谱面
-                    result = self.beatmap_analyzer.analyze()
-                    
-                    # 尝试找到关联的音频文件
-                    audio_file = None
-                    try:
-                        # 从谱面内容中获取音频文件名
-                        with open(file_path, "r", encoding="utf-8") as f:
-                            content = f.read()
-                            audio_lines = [line for line in content.split("\n") if "AudioFilename:" in line]
-                            if audio_lines:
-                                audio_filename = audio_lines[0].split(":")[-1].strip()
-                                beatmap_dir = os.path.dirname(file_path)
-                                audio_file = os.path.join(beatmap_dir, audio_filename)
-                                
-                                # 检查文件是否存在
-                                if not os.path.exists(audio_file):
-                                    audio_file = None
-                    except:
-                        audio_file = None
-                    
-                    # 如果找到音频文件，则进行音频分析
-                    if audio_file and os.path.exists(audio_file):
-                        try:
-                            if self.audio_analyzer.load_audio(audio_file):
-                                audio_features = self.audio_analyzer.analyze()
-                                result["audio_features"] = audio_features
-                        except Exception as e:
-                            print(f"无法分析音频文件 {audio_file}: {str(e)}")
-                    
-                    # 将结果添加到列表
-                    all_results.append({
-                        "beatmap_file": file_path,
-                        "audio_file": audio_file,
-                        "analysis": result
-                    })
-            
-            except Exception as e:
-                print(f"处理文件 {file_path} 时出错: {str(e)}")
-            
-            processed_files += 1
+        # 设置每批处理的文件数
+        batch_size = self.batch_size_spin.value()
+        total_batches = (total_files + batch_size - 1) // batch_size  # 向上取整计算批次数
         
-        # 保存数据集
-        try:
-            dataset_file = os.path.join(dataset_output_dir, "dataset.json")
-            with open(dataset_file, "w", encoding="utf-8") as f:
-                json.dump(all_results, f, indent=2)
+        for batch_index in range(total_batches):
+            # 获取当前批次的文件
+            start_idx = batch_index * batch_size
+            end_idx = min(start_idx + batch_size, total_files)
+            batch_files = beatmap_files[start_idx:end_idx]
             
-            self.dataset_status_label.setText(f"数据集处理完成，已保存到: {dataset_file}")
+            batch_results = []
+            
+            # 更新状态
+            self.dataset_status_label.setText(f"正在处理批次 {batch_index+1}/{total_batches}...")
+            self.dataset_progress_bar.setValue(int(batch_index / total_batches * 100))
+            QtCore.QCoreApplication.processEvents()
+            
+            # 处理当前批次的文件
+            for file_idx, file_path in enumerate(batch_files):
+                try:
+                    # 更新状态
+                    file_name = os.path.basename(file_path)
+                    self.dataset_status_label.setText(
+                        f"批次 {batch_index+1}/{total_batches}, "
+                        f"文件 {file_idx+1}/{len(batch_files)}: {file_name}"
+                    )
+                    QtCore.QCoreApplication.processEvents()
+                    
+                    # 加载谱面文件
+                    if self.beatmap_analyzer.load_beatmap(file_path):
+                        # 分析谱面
+                        result = self.beatmap_analyzer.analyze()
+                        
+                        # 尝试找到关联的音频文件
+                        audio_file = None
+                        try:
+                            # 从谱面内容中获取音频文件名
+                            with open(file_path, "r", encoding="utf-8") as f:
+                                content = f.read()
+                                audio_lines = [line for line in content.split("\n") if "AudioFilename:" in line]
+                                if audio_lines:
+                                    audio_filename = audio_lines[0].split(":")[-1].strip()
+                                    beatmap_dir = os.path.dirname(file_path)
+                                    audio_file = os.path.join(beatmap_dir, audio_filename)
+                                    
+                                    # 检查文件是否存在
+                                    if not os.path.exists(audio_file):
+                                        audio_file = None
+                        except:
+                            audio_file = None
+                        
+                        # 如果找到音频文件，则进行音频分析
+                        if audio_file and os.path.exists(audio_file):
+                            try:
+                                if self.audio_analyzer.load_audio(audio_file):
+                                    audio_features = self.audio_analyzer.analyze()
+                                    result["audio_features"] = audio_features
+                            except Exception as e:
+                                print(f"无法分析音频文件 {audio_file}: {str(e)}")
+                        
+                        # 将结果添加到批次结果和总结果
+                        item_result = {
+                            "beatmap_file": file_path,
+                            "audio_file": audio_file,
+                            "analysis": result
+                        }
+                        batch_results.append(item_result)
+                        all_results.append(item_result)
+                
+                except Exception as e:
+                    print(f"处理文件 {file_path} 时出错: {str(e)}")
+                
+                processed_files += 1
+                
+                # 更新子进度
+                sub_progress = int((file_idx + 1) / len(batch_files) * 100)
+                self.dataset_progress_bar.setValue(
+                    int((batch_index * 100 + sub_progress) / total_batches)
+                )
+                QtCore.QCoreApplication.processEvents()
+            
+            # 保存当前批次结果
+            batch_file = os.path.join(batches_dir, f"batch_{batch_index+1}.json")
+            try:
+                with open(batch_file, "w", encoding="utf-8") as f:
+                    json.dump(batch_results, f, indent=2)
+                    
+                self.dataset_status_label.setText(
+                    f"批次 {batch_index+1}/{total_batches} 已完成并保存。"
+                    f"已处理: {processed_files}/{total_files} 个文件"
+                )
+                QtCore.QCoreApplication.processEvents()
+            except Exception as e:
+                QtWidgets.QMessageBox.warning(
+                    self, 
+                    "警告", 
+                    f"保存批次 {batch_index+1} 时出错: {str(e)}"
+                )
+        
+        # 保存完整数据集
+        try:
+            # 检查是否需要分割数据集
+            is_split_enabled = self.enable_split_check.isChecked()
+            
+            if is_split_enabled:
+                # 获取分割比例
+                train_percent = self.train_percent_spin.value() / 100.0
+                val_percent = self.val_percent_spin.value() / 100.0
+                test_percent = self.test_percent_spin.value() / 100.0
+                
+                # 获取分割方式
+                split_method = self.split_method_combo.currentText()
+                
+                # 创建子目录
+                train_dir = os.path.join(dataset_output_dir, "train")
+                val_dir = os.path.join(dataset_output_dir, "val")
+                test_dir = os.path.join(dataset_output_dir, "test")
+                
+                os.makedirs(train_dir, exist_ok=True)
+                os.makedirs(val_dir, exist_ok=True)
+                os.makedirs(test_dir, exist_ok=True)
+                
+                # 根据选择的分割方式进行不同处理
+                if split_method == "按文件夹分割":
+                    # 按文件夹分组谱面
+                    folder_groups = {}
+                    for item in all_results:
+                        beatmap_file = item["beatmap_file"]
+                        # 获取所在的文件夹路径
+                        folder_path = os.path.dirname(beatmap_file)
+                        
+                        if folder_path not in folder_groups:
+                            folder_groups[folder_path] = []
+                        
+                        folder_groups[folder_path].append(item)
+                    
+                    # 随机打乱文件夹列表（不打乱文件夹内的文件）
+                    import random
+                    folder_paths = list(folder_groups.keys())
+                    random.shuffle(folder_paths)
+                    
+                    # 计算每个集合应包含的文件夹数量
+                    total_folders = len(folder_paths)
+                    train_folders_count = int(total_folders * train_percent)
+                    val_folders_count = int(total_folders * val_percent)
+                    
+                    # 分割文件夹到训练集、验证集和测试集
+                    train_folders = folder_paths[:train_folders_count]
+                    val_folders = folder_paths[train_folders_count:train_folders_count + val_folders_count]
+                    test_folders = folder_paths[train_folders_count + val_folders_count:]
+                    
+                    # 根据文件夹分组整理数据
+                    train_data = []
+                    for folder in train_folders:
+                        train_data.extend(folder_groups[folder])
+                        
+                    val_data = []
+                    for folder in val_folders:
+                        val_data.extend(folder_groups[folder])
+                        
+                    test_data = []
+                    for folder in test_folders:
+                        test_data.extend(folder_groups[folder])
+                    
+                    # 保存分割信息以便查看
+                    split_info = {
+                        "method": "按文件夹分割",
+                        "train_folders": train_folders,
+                        "val_folders": val_folders,
+                        "test_folders": test_folders,
+                        "train_percent": train_percent,
+                        "val_percent": val_percent,
+                        "test_percent": test_percent,
+                        "total_folders": total_folders,
+                        "total_files": total_files
+                    }
+                    
+                    with open(os.path.join(dataset_output_dir, "split_info.json"), "w", encoding="utf-8") as f:
+                        json.dump(split_info, f, indent=2)
+                    
+                    success_message = (
+                        f"成功处理 {processed_files} 个文件!\n"
+                        f"数据集已按文件夹分割并保存到以下目录:\n"
+                        f"- 训练集 ({len(train_data)}个样本，{len(train_folders)}个文件夹): {train_dir}\n"
+                        f"- 验证集 ({len(val_data)}个样本，{len(val_folders)}个文件夹): {val_dir}\n"
+                        f"- 测试集 ({len(test_data)}个样本，{len(test_folders)}个文件夹): {test_dir}\n"
+                        f"分割信息已保存至: {os.path.join(dataset_output_dir, 'split_info.json')}"
+                    )
+                    
+                else:  # "随机分割"
+                    # 随机打乱数据
+                    import random
+                    random.shuffle(all_results)
+                    
+                    # 计算每个集合的大小
+                    total_samples = len(all_results)
+                    train_size = int(total_samples * train_percent)
+                    val_size = int(total_samples * val_percent)
+                    
+                    # 分割数据集
+                    train_data = all_results[:train_size]
+                    val_data = all_results[train_size:train_size + val_size]
+                    test_data = all_results[train_size + val_size:]
+                    
+                    # 保存分割信息
+                    split_info = {
+                        "method": "随机分割",
+                        "train_percent": train_percent,
+                        "val_percent": val_percent,
+                        "test_percent": test_percent,
+                        "train_size": len(train_data),
+                        "val_size": len(val_data),
+                        "test_size": len(test_data),
+                        "total_files": total_files
+                    }
+                    
+                    with open(os.path.join(dataset_output_dir, "split_info.json"), "w", encoding="utf-8") as f:
+                        json.dump(split_info, f, indent=2)
+                    
+                    success_message = (
+                        f"成功处理 {processed_files} 个文件!\n"
+                        f"数据集已随机分割并保存到以下目录:\n"
+                        f"- 训练集 ({len(train_data)}个样本): {train_dir}\n"
+                        f"- 验证集 ({len(val_data)}个样本): {val_dir}\n"
+                        f"- 测试集 ({len(test_data)}个样本): {test_dir}\n"
+                        f"分割信息已保存至: {os.path.join(dataset_output_dir, 'split_info.json')}"
+                    )
+                
+                # 保存训练集
+                train_file = os.path.join(train_dir, "dataset.json")
+                with open(train_file, "w", encoding="utf-8") as f:
+                    json.dump(train_data, f, indent=2)
+                
+                # 保存验证集
+                val_file = os.path.join(val_dir, "dataset.json")
+                with open(val_file, "w", encoding="utf-8") as f:
+                    json.dump(val_data, f, indent=2)
+                
+                # 保存测试集
+                test_file = os.path.join(test_dir, "dataset.json")
+                with open(test_file, "w", encoding="utf-8") as f:
+                    json.dump(test_data, f, indent=2)
+                
+                # 保存完整数据集（可选）
+                full_dataset_file = os.path.join(dataset_output_dir, "dataset_full.json")
+                with open(full_dataset_file, "w", encoding="utf-8") as f:
+                    json.dump(all_results, f, indent=2)
+                
+                self.dataset_status_label.setText(
+                    f"数据集处理完成，已分割为训练集({len(train_data)}个样本)、"
+                    f"验证集({len(val_data)}个样本)和测试集({len(test_data)}个样本)"
+                )
+            else:
+                # 不分割，直接保存完整数据集
+                dataset_file = os.path.join(dataset_output_dir, "dataset.json")
+                with open(dataset_file, "w", encoding="utf-8") as f:
+                    json.dump(all_results, f, indent=2)
+                
+                self.dataset_status_label.setText(f"数据集处理完成，已保存到: {dataset_file}")
+                success_message = f"成功处理 {processed_files} 个文件!\n数据集已保存到: {dataset_file}"
+            
             self.dataset_progress_bar.setValue(100)
             
             QtWidgets.QMessageBox.information(
-                self, "处理完成", 
-                f"成功处理 {processed_files} 个文件!\n数据集已保存到: {dataset_file}"
+                self, "处理完成", success_message
             )
         except Exception as e:
             QtWidgets.QMessageBox.critical(
@@ -2157,10 +2419,18 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
             QtWidgets.QMessageBox.warning(self, "警告", "请先选择有效的输出文件夹!")
             return
         
-        dataset_file = os.path.join(output_path, "beatmap_dataset/dataset.json")
-        if not os.path.exists(dataset_file):
-            QtWidgets.QMessageBox.warning(self, "警告", "未找到处理好的数据集文件，请先处理数据集!")
+        dataset_dir = os.path.join(output_path, "beatmap_dataset")
+        if not os.path.exists(dataset_dir):
+            QtWidgets.QMessageBox.warning(self, "警告", "未找到处理好的数据集目录，请先处理数据集!")
             return
+        
+        # 检查是否有分割后的数据集或批次数据
+        is_split = os.path.exists(os.path.join(dataset_dir, "train")) and \
+                  os.path.exists(os.path.join(dataset_dir, "val")) and \
+                  os.path.exists(os.path.join(dataset_dir, "test"))
+        
+        batches_dir = os.path.join(dataset_dir, "batches")
+        has_batches = os.path.exists(batches_dir) and len(os.listdir(batches_dir)) > 0
         
         # 选择导出位置
         export_path, _ = QtWidgets.QFileDialog.getSaveFileName(
@@ -2177,8 +2447,79 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
             import tempfile
             temp_dir = tempfile.mkdtemp()
             
-            # 复制数据集文件
-            shutil.copy2(dataset_file, os.path.join(temp_dir, "dataset.json"))
+            if is_split:
+                # 复制分割后的数据集文件
+                train_dir = os.path.join(temp_dir, "train")
+                val_dir = os.path.join(temp_dir, "val")
+                test_dir = os.path.join(temp_dir, "test")
+                
+                os.makedirs(train_dir, exist_ok=True)
+                os.makedirs(val_dir, exist_ok=True)
+                os.makedirs(test_dir, exist_ok=True)
+                
+                # 复制训练集
+                train_src = os.path.join(dataset_dir, "train", "dataset.json")
+                if os.path.exists(train_src):
+                    shutil.copy2(train_src, os.path.join(train_dir, "dataset.json"))
+                
+                # 复制验证集
+                val_src = os.path.join(dataset_dir, "val", "dataset.json")
+                if os.path.exists(val_src):
+                    shutil.copy2(val_src, os.path.join(val_dir, "dataset.json"))
+                
+                # 复制测试集
+                test_src = os.path.join(dataset_dir, "test", "dataset.json")
+                if os.path.exists(test_src):
+                    shutil.copy2(test_src, os.path.join(test_dir, "dataset.json"))
+                
+                # 创建README文件，说明数据集结构
+                with open(os.path.join(temp_dir, "README.txt"), "w", encoding="utf-8") as f:
+                    f.write("OSU谱面数据集\n")
+                    f.write("===========\n\n")
+                    f.write("本数据集包含以下部分：\n")
+                    f.write("- train/: 训练集\n")
+                    f.write("- val/: 验证集\n")
+                    f.write("- test/: 测试集\n\n")
+                    f.write("每个子集都包含一个dataset.json文件，其中包含谱面分析和音频特征提取的结果。\n")
+            else:
+                # 复制单一数据集文件或批次文件
+                dataset_file = os.path.join(dataset_dir, "dataset.json")
+                
+                if has_batches:
+                    # 如果有批次数据，导出批次数据
+                    batches_export_dir = os.path.join(temp_dir, "batches")
+                    os.makedirs(batches_export_dir, exist_ok=True)
+                    
+                    # 复制所有批次文件
+                    batch_files = [f for f in os.listdir(batches_dir) if f.endswith('.json')]
+                    for batch_file in batch_files:
+                        src_path = os.path.join(batches_dir, batch_file)
+                        dst_path = os.path.join(batches_export_dir, batch_file)
+                        shutil.copy2(src_path, dst_path)
+                    
+                    # 如果存在完整数据集，也导出它
+                    full_dataset = os.path.join(dataset_dir, "dataset.json")
+                    if os.path.exists(full_dataset):
+                        shutil.copy2(full_dataset, os.path.join(temp_dir, "dataset_full.json"))
+                    
+                    with open(os.path.join(temp_dir, "README.txt"), "w", encoding="utf-8") as f:
+                        f.write("OSU谱面数据集 (批次处理)\n")
+                        f.write("=================\n\n")
+                        f.write("本数据集包含以下内容：\n")
+                        f.write("- batches/: 包含分批处理的数据集文件\n")
+                        if os.path.exists(full_dataset):
+                            f.write("- dataset_full.json: 完整的合并数据集\n\n")
+                        f.write("每个批次文件包含一部分谱面分析和音频特征提取的结果。\n")
+                else:
+                    # 只有单一数据集文件
+                    if os.path.exists(dataset_file):
+                        shutil.copy2(dataset_file, os.path.join(temp_dir, "dataset.json"))
+                
+                    # 创建README文件
+                    with open(os.path.join(temp_dir, "README.txt"), "w", encoding="utf-8") as f:
+                        f.write("OSU谱面数据集\n")
+                        f.write("===========\n\n")
+                        f.write("本数据集包含一个dataset.json文件，其中包含谱面分析和音频特征提取的结果。\n")
             
             # 创建压缩文件
             shutil.make_archive(export_path.replace(".zip", ""), 'zip', temp_dir)
@@ -2195,6 +2536,51 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
                 self, "错误", 
                 f"导出数据集时出错: {str(e)}"
             )
+    
+    def adjust_split_percentages(self):
+        """调整数据集分割的百分比，确保总和为100%"""
+        # 获取当前百分比
+        train_percent = self.train_percent_spin.value()
+        val_percent = self.val_percent_spin.value()
+        test_percent = self.test_percent_spin.value()
+        
+        # 计算总和
+        total = train_percent + val_percent + test_percent
+        
+        # 如果总和不是100%，调整百分比
+        if total != 100:
+            # 确定是哪个触发了变更
+            sender = self.sender()
+            
+            if sender == self.train_percent_spin:
+                # 训练集被更改，平衡验证集和测试集
+                remaining = 100 - train_percent
+                ratio = val_percent / (val_percent + test_percent) if (val_percent + test_percent) > 0 else 0.5
+                new_val = int(remaining * ratio)
+                new_test = remaining - new_val
+                
+                self.val_percent_spin.blockSignals(True)
+                self.test_percent_spin.blockSignals(True)
+                self.val_percent_spin.setValue(new_val)
+                self.test_percent_spin.setValue(new_test)
+                self.val_percent_spin.blockSignals(False)
+                self.test_percent_spin.blockSignals(False)
+                
+            elif sender == self.val_percent_spin:
+                # 验证集被更改，调整测试集
+                new_test = 100 - train_percent - val_percent
+                
+                self.test_percent_spin.blockSignals(True)
+                self.test_percent_spin.setValue(new_test)
+                self.test_percent_spin.blockSignals(False)
+                
+            elif sender == self.test_percent_spin:
+                # 测试集被更改，调整验证集
+                new_val = 100 - train_percent - test_percent
+                
+                self.val_percent_spin.blockSignals(True)
+                self.val_percent_spin.setValue(new_val)
+                self.val_percent_spin.blockSignals(False)
 
     # 模型训练部分的方法开始
     def browse_training_data(self):
