@@ -1,0 +1,188 @@
+# OSU谱面生成器数据集JSON格式规范
+
+## 主要结构
+
+数据集是一个JSON数组，每个元素代表一个谱面及其分析结果：
+
+```json
+[
+  {
+    "beatmap_file": "谱面文件的完整路径",
+    "audio_file": "关联音频文件的完整路径(如存在)",
+    "analysis": {
+      // 谱面分析结果
+      // 音频特征 (如果分析了关联音频)
+    }
+  },
+  // 更多谱面条目...
+]
+```
+
+## 谱面分析部分详细结构 (analysis对象)
+
+### 1. 基本信息
+
+```json
+"basic_info": {
+  "title": "谱面标题",
+  "artist": "音乐艺术家",
+  "creator": "谱面创建者",
+  "version": "谱面难度版本名称",
+  "hit_objects_count": 物件总数,
+  "circles_count": 圆圈数量,
+  "sliders_count": 滑条数量,
+  "spinners_count": 转盘数量
+}
+```
+
+### 2. 时长信息
+
+```json
+"duration": {
+  "first_object": 第一个物件的时间(毫秒),
+  "last_object": 最后一个物件的时间(毫秒),
+  "total_ms": 谱面总时长(毫秒),
+  "total_seconds": 谱面总时长(秒)
+}
+```
+
+### 3. 物件分布
+
+```json
+"distribution": {
+  "time_intervals": [相邻物件之间的时间间隔数组],
+  "avg_time_interval": 平均时间间隔,
+  "min_time_interval": 最小时间间隔,
+  "max_time_interval": 最大时间间隔,
+  "distances": [相邻物件之间的距离数组],
+  "avg_distance": 平均距离,
+  "max_distance": 最大距离
+}
+```
+
+### 4. 热图数据
+
+```json
+"heatmap": {
+  "x": [所有物件的X坐标数组],
+  "y": [所有物件的Y坐标数组]
+}
+```
+
+### 5. 难度参数
+
+```json
+"difficulty": {
+  "AR": 接近速度,
+  "OD": 整体难度,
+  "CS": 圆圈大小,
+  "HP": 血量消耗率,
+  "slider_multiplier": 滑条速度倍率,
+  "slider_tick_rate": 滑条打点频率
+}
+```
+
+### 6. 难度评级
+
+```json
+"difficulty_rating": {
+  "overall_level": "整体难度级别(Easy/Normal/Hard/Insane/Expert)",
+  "numerical_rating": 数值评分,
+  "ar_rating": "AR参数评价",
+  "od_rating": "OD参数评价",
+  "cs_rating": "CS参数评价",
+  "hp_rating": "HP参数评价"
+}
+```
+
+### 7. 节奏信息
+
+```json
+"rhythm": {
+  "bpm": 主要BPM,
+  "objects_per_second": 每秒物件数,
+  "objects_per_beat": 每拍物件数,
+  "density_level": "密度级别描述",
+  "stream_sections": [连打段落时间范围数组],
+  "stream_sections_count": 连打段落数量
+}
+```
+
+### 8. 谱面模式统计
+
+```json
+"patterns": {
+  "jumps": 跳跃数量,
+  "streams": 流串数量,
+  "sliders": 滑条数量,
+  "spinners": 转盘数量,
+  "stacks": 堆叠数量,
+  "triangles": 三角形模式数量,
+  "squares": 方形模式数量,
+  "back_and_forth": 往返模式数量,
+  "zigzags": 之字形模式数量
+}
+```
+
+## 音频特征部分详细结构 (audio_features对象)
+
+如果存在音频文件分析结果，则会包含以下内容：
+
+```json
+"audio_features": {
+  "bpm": 检测到的BPM,
+  "duration": 音频时长(秒),
+  "sr": 采样率,
+  "beat_times": [节拍时间点数组],
+  "beat_strengths": [节拍强度数组],
+  "spectral_centroids": [光谱质心数组],
+  "spectral_rolloffs": [频谱衰减数组],
+  "mfccs": [梅尔频率倒谱系数],
+  "onsets": [音符起始点数组],
+  "energy_points": [能量高点数组],
+  "sections": [曲目段落划分],
+  "transitions": [过渡点时间数组],
+  "volume_envelope": [音量包络线数组]
+}
+```
+
+## 数据集文件组织
+
+处理后的数据集会按如下方式组织:
+
+1. 完整数据集: 
+   - `dataset_full.json` 或 `dataset.json` - 包含所有处理过的谱面
+
+2. 分割数据集: 
+   - `train/dataset.json` - 训练集部分
+   - `val/dataset.json` - 验证集部分
+   - `test/dataset.json` - 测试集部分
+
+3. 批次数据: 
+   - `batches/batch_1.json`, `batches/batch_2.json`, ... - 按批次处理的数据
+
+## 数据集分割策略
+
+数据集可以使用以下分割策略:
+
+1. 随机分割 - 完全随机将谱面分配到训练集、验证集和测试集
+2. 按谱面创建者分割 - 确保同一创建者的谱面只出现在同一个集合中
+3. 按歌曲分割 - 确保同一歌曲的不同难度谱面只出现在同一个集合中
+
+## 数据集使用建议
+
+1. 在训练模型时，应使用训练集进行训练，验证集进行超参数调整，测试集评估最终效果
+2. 对于谱面生成任务，可将音频特征作为输入，谱面分析结果中的物件位置和时间作为输出目标
+3. 对于难度估计任务，可使用音频特征和部分谱面信息预测难度评级
+4. 处理数据时应注意归一化特征，尤其是物件坐标和时间戳
+
+## 数据集统计信息
+
+处理完成后，会生成以下统计信息:
+
+- 处理的谱面总数
+- 跳过的无效文件数
+- 出错的文件夹数
+- 训练/验证/测试集的样本数量
+- 平均每个谱面的物件数
+- 数据集中不同难度级别的分布情况

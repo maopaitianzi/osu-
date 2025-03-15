@@ -1,450 +1,207 @@
-# osu!风格谱面生成器 - 模型实现状态
+# 谱面生成器模型模块
 
-## 概述
+本模块包含了用于谱面生成的深度学习模型和相关工具。
 
-本文档描述了osu!风格谱面生成器中深度学习模型的实现状态，包括已完成的模型架构、待完成的训练流程和评估方法。模型基于Transformer架构，能够学习音频特征与谱面设计之间的关系，生成符合节奏和游戏规则的谱面。
+## 模块组成
 
-## 当前实现状态
+- `transformer.py` - 基于Transformer的谱面生成模型
+- `training.py` - 模型训练器和数据集处理
+- `evaluation.py` - 模型评估和谱面生成工具
+- `config.py` - 模型和训练配置参数
 
-### 已实现组件
+## 模型架构
 
-1. **特征编码器 (FeatureEncoder)**
-   - 实现文件：`transformer.py`
-   - 功能：将音频特征（频谱、节拍、能量等）编码为模型可处理的表示
-   - 包含特征投影层和位置编码
-   
-2. **谱面解码器 (BeatmapDecoder)**
-   - 实现文件：`transformer.py`
-   - 功能：将模型输出解码为具体的谱面元素（物件类型、位置、时间等）
-   
-3. **Transformer模型 (BeatmapTransformer)**
-   - 实现文件：`transformer.py`
-   - 功能：完整的编码器-解码器Transformer架构
-   - 包含前向传播和生成方法
-   
-4. **位置编码 (PositionalEncoding)**
-   - 实现文件：`positional_encoding.py`
-   - 功能：为序列输入添加位置信息
+模型采用了Transformer的编码器-解码器架构，结构如下：
 
-### 待实现组件
+1. **音频编码器**：将音频特征（如节拍、强度、频谱特征等）编码为隐藏表示
+2. **谱面解码器**：自回归地生成谱面物件序列（坐标、时间和类型）
 
-1. **数据加载器**
-   - 需要设计适用于音频特征和谱面数据的DataLoader
-   - 支持训练和验证数据划分
-   
-2. **损失函数**
-   - 需要实现自定义损失函数，结合MSE损失和节奏相关损失
-   - 实现多目标损失加权
-   
-3. **训练循环**
-   - 实现完整的训练和验证循环
-   - 支持早停、学习率调度等功能
-   
-4. **模型评估指标**
-   - 实现谱面质量、节奏一致性等评估指标
-   - 开发可视化工具用于模型输出分析
+![模型架构](https://example.com/model_architecture.png)
 
-## 模型架构设计
+### 主要特点
 
-### 核心架构：Transformer序列生成模型
+- 基于**Transformer**架构，充分利用注意力机制捕获音频特征与谱面物件之间的关系
+- 支持**自回归生成**，根据已生成的物件预测下一个物件
+- 采用**编码器-解码器**结构，允许音频特征和谱面特征之间的双向信息流动
+- 使用**位置编码**来保持序列中的位置信息
+- 支持**批量处理**，提高训练和推理效率
 
-我们已实现了一个基于Transformer的序列到序列模型，用于将音频特征序列映射到谱面元素序列。核心架构包括：
+## 使用方法
 
-1. **特征编码器**：将音频特征（频谱、节拍、能量等）编码为模型可处理的表示
-2. **Transformer编码器**：处理时序特征，捕捉长期依赖
-3. **Transformer解码器**：生成谱面元素序列
-4. **谱面解码器**：将模型输出解码为具体的谱面元素（物件类型、位置、时间等）
-
-```
-                       ┌─────────────────┐
-                       │                 │
-音频特征 ───────────────┤  特征编码器     │
-                       │                 │
-                       └────────┬────────┘
-                                │
-                                ▼
-                       ┌─────────────────┐
-                       │                 │
-                       │ Transformer     │
-                       │ 编码器          │
-                       │                 │
-                       └────────┬────────┘
-                                │
-                                ▼
-                       ┌─────────────────┐
-                       │                 │
-                       │ Transformer     │
-                       │ 解码器          │
-                       │                 │
-                       └────────┬────────┘
-                                │
-                                ▼
-                       ┌─────────────────┐
-                       │                 │
-                       │  谱面解码器      │
-                       │                 │
-                       └────────┬────────┘
-                                │
-                                ▼
-                             谱面元素
-```
-
-### 详细设计规范
-
-#### 1. 特征编码器
-
-- 输入：音频特征矩阵 (batch_size, seq_length, feature_dim)
-- 输出：编码特征 (batch_size, seq_length, hidden_dim)
-- 结构：多层前馈网络 + 位置编码
-- 实现：
-  ```python
-  class FeatureEncoder(nn.Module):
-      def __init__(self, feature_dim, hidden_dim, dropout=0.1):
-          super().__init__()
-          self.feature_projection = nn.Linear(feature_dim, hidden_dim)
-          self.position_encoder = PositionalEncoding(hidden_dim, dropout)
-          self.layer_norm = nn.LayerNorm(hidden_dim)
-          
-      def forward(self, x):
-          # x: [batch_size, seq_length, feature_dim]
-          x = self.feature_projection(x)
-          x = self.position_encoder(x)
-          return self.layer_norm(x)
-  ```
-
-#### 2. Transformer编码器
-
-- 输入：编码特征 (batch_size, seq_length, hidden_dim)
-- 输出：上下文特征 (batch_size, seq_length, hidden_dim)
-- 结构：多头自注意力 + 前馈网络，4-6层
-- 实现：使用PyTorch的`nn.TransformerEncoder`
-
-#### 3. Transformer解码器
-
-- 输入：上下文特征 + 已生成序列
-- 输出：下一元素预测 (batch_size, seq_length, hidden_dim)
-- 结构：掩码多头自注意力 + 交叉注意力 + 前馈网络，4-6层
-- 实现：使用PyTorch的`nn.TransformerDecoder`
-
-#### 4. 谱面解码器
-
-- 输入：Transformer解码器输出
-- 输出：谱面元素参数（类型概率、位置、时间等）
-- 结构：多头预测网络，分别预测不同特征
-- 实现：
-  ```python
-  class BeatmapDecoder(nn.Module):
-      def __init__(self, hidden_dim, n_object_types, n_positions):
-          super().__init__()
-          self.object_type_head = nn.Linear(hidden_dim, n_object_types)
-          self.position_head = nn.Linear(hidden_dim, n_positions)
-          self.time_offset_head = nn.Linear(hidden_dim, 1)
-          
-      def forward(self, x):
-          # x: [batch_size, seq_length, hidden_dim]
-          object_type_logits = self.object_type_head(x)
-          position_logits = self.position_head(x)
-          time_offset = self.time_offset_head(x)
-          
-          return {
-              "object_type": object_type_logits,
-              "position": position_logits,
-              "time_offset": time_offset
-          }
-  ```
-
-### 整体模型结构
+### 模型训练
 
 ```python
-class BeatmapTransformer(nn.Module):
-    def __init__(
-        self,
-        feature_dim=128,
-        hidden_dim=256,
-        n_object_types=4,
-        n_positions=100,
-        n_encoder_layers=4,
-        n_decoder_layers=4,
-        nhead=8,
-        dropout=0.1
-    ):
-        super().__init__()
-        
-        # 特征编码器
-        self.feature_encoder = FeatureEncoder(feature_dim, hidden_dim, dropout)
-        
-        # Transformer编码器
-        encoder_layer = nn.TransformerEncoderLayer(
-            d_model=hidden_dim,
-            nhead=nhead,
-            dim_feedforward=hidden_dim*4,
-            dropout=dropout,
-            batch_first=True
-        )
-        self.transformer_encoder = nn.TransformerEncoder(
-            encoder_layer, 
-            num_layers=n_encoder_layers
-        )
-        
-        # Transformer解码器
-        decoder_layer = nn.TransformerDecoderLayer(
-            d_model=hidden_dim,
-            nhead=nhead,
-            dim_feedforward=hidden_dim*4,
-            dropout=dropout,
-            batch_first=True
-        )
-        self.transformer_decoder = nn.TransformerDecoder(
-            decoder_layer, 
-            num_layers=n_decoder_layers
-        )
-        
-        # 谱面解码器
-        self.beatmap_decoder = BeatmapDecoder(hidden_dim, n_object_types, n_positions)
-        
-        # 目标嵌入
-        self.target_embedding = nn.Embedding(n_object_types, hidden_dim)
-        self.position_embedding = nn.Embedding(n_positions, hidden_dim)
-        self.time_embedding = nn.Linear(1, hidden_dim)
-        
-    def forward(self, audio_features, target_seq=None, target_mask=None):
-        # audio_features: [batch_size, seq_length, feature_dim]
-        
-        # 编码音频特征
-        memory = self.feature_encoder(audio_features)
-        memory = self.transformer_encoder(memory)
-        
-        if self.training and target_seq is not None:
-            # 训练模式：使用教师强制
-            # 处理目标序列
-            embedded_targets = self.process_targets(target_seq)
-            
-            # 解码
-            output = self.transformer_decoder(
-                embedded_targets, memory, tgt_mask=target_mask
-            )
-            
-            # 预测输出
-            return self.beatmap_decoder(output)
-        else:
-            # 推理模式：自回归生成
-            return self.generate(memory, max_length=100)
-            
-    def process_targets(self, target_seq):
-        # 将目标序列嵌入
-        # target_seq包含[object_type, position, time]
-        object_embeds = self.target_embedding(target_seq[:, :, 0].long())
-        position_embeds = self.position_embedding(target_seq[:, :, 1].long())
-        time_embeds = self.time_embedding(target_seq[:, :, 2:3])
-        
-        # 组合嵌入
-        return object_embeds + position_embeds + time_embeds
-        
-    def generate(self, memory, max_length=100):
-        # 自回归生成谱面序列
-        # 实现推理时的自回归解码
-        # ...（详细实现略）
+from models.transformer import TransformerModel
+from models.training import BeatmapDataset, Trainer
+from models.config import NORMAL_CONFIG, DEFAULT_TRAINING_CONFIG
+import torch
+from torch.utils.data import DataLoader
+
+# 创建模型
+model = TransformerModel(
+    input_dim=NORMAL_CONFIG.input_dim,
+    d_model=NORMAL_CONFIG.d_model,
+    output_dim=NORMAL_CONFIG.output_dim,
+    nhead=NORMAL_CONFIG.nhead,
+    num_encoder_layers=NORMAL_CONFIG.num_encoder_layers,
+    num_decoder_layers=NORMAL_CONFIG.num_decoder_layers,
+    dim_feedforward=NORMAL_CONFIG.dim_feedforward,
+    dropout=NORMAL_CONFIG.dropout
+)
+
+# 创建数据集
+train_dataset = BeatmapDataset(
+    data_path="path/to/train/dataset.json",
+    max_audio_seq_len=NORMAL_CONFIG.max_audio_seq_len,
+    max_beatmap_seq_len=NORMAL_CONFIG.max_beatmap_seq_len,
+    audio_feature_keys=NORMAL_CONFIG.audio_feature_keys
+)
+
+val_dataset = BeatmapDataset(
+    data_path="path/to/val/dataset.json",
+    max_audio_seq_len=NORMAL_CONFIG.max_audio_seq_len,
+    max_beatmap_seq_len=NORMAL_CONFIG.max_beatmap_seq_len,
+    audio_feature_keys=NORMAL_CONFIG.audio_feature_keys
+)
+
+# 创建数据加载器
+train_dataloader = DataLoader(
+    train_dataset,
+    batch_size=DEFAULT_TRAINING_CONFIG.batch_size,
+    shuffle=DEFAULT_TRAINING_CONFIG.shuffle_dataset,
+    num_workers=DEFAULT_TRAINING_CONFIG.num_workers
+)
+
+val_dataloader = DataLoader(
+    val_dataset,
+    batch_size=DEFAULT_TRAINING_CONFIG.batch_size,
+    shuffle=False,
+    num_workers=DEFAULT_TRAINING_CONFIG.num_workers
+)
+
+# 创建训练器
+trainer = Trainer(
+    model=model,
+    train_dataloader=train_dataloader,
+    val_dataloader=val_dataloader,
+    lr=DEFAULT_TRAINING_CONFIG.lr,
+    weight_decay=DEFAULT_TRAINING_CONFIG.weight_decay,
+    device=DEFAULT_TRAINING_CONFIG.device,
+    checkpoint_dir=DEFAULT_TRAINING_CONFIG.checkpoint_dir,
+    log_dir=DEFAULT_TRAINING_CONFIG.log_dir,
+    save_every=DEFAULT_TRAINING_CONFIG.save_every
+)
+
+# 训练模型
+history = trainer.train(
+    num_epochs=DEFAULT_TRAINING_CONFIG.num_epochs,
+    progress_callback=lambda progress: print(f"进度: {progress}%"),
+    epoch_callback=lambda epoch, train_loss, val_loss: print(f"Epoch {epoch}: train_loss={train_loss}, val_loss={val_loss}"),
+    log_callback=lambda message: print(message)
+)
+
+# 保存最终模型
+trainer.save_checkpoint("final_model.pth")
+
+# 绘制损失曲线
+trainer.plot_losses(save_path="loss_curve.png")
 ```
 
-## 损失函数设计
-
-模型将使用多任务损失函数，包括：
-
-1. **物件类型损失**：交叉熵损失，预测物件类型（圆圈、滑条、转盘等）
-2. **位置损失**：交叉熵或MSE损失，预测物件位置坐标
-3. **时间损失**：MSE损失，预测物件时间点与音乐节拍的关系
-4. **节奏一致性损失**：自定义损失，确保生成的谱面与音乐节奏一致
-
-总损失函数将是这些组件的加权和：
+### 谱面生成
 
 ```python
-def compute_loss(predictions, targets, weights):
-    # 物件类型损失（分类问题）
-    type_loss = F.cross_entropy(
-        predictions["object_type"].view(-1, predictions["object_type"].size(-1)),
-        targets[:, :, 0].long().view(-1)
-    )
-    
-    # 位置损失（分类或回归问题）
-    position_loss = F.cross_entropy(
-        predictions["position"].view(-1, predictions["position"].size(-1)),
-        targets[:, :, 1].long().view(-1)
-    )
-    
-    # 时间损失（回归问题）
-    time_loss = F.mse_loss(
-        predictions["time_offset"].view(-1),
-        targets[:, :, 2].view(-1)
-    )
-    
-    # 节奏一致性损失（自定义）
-    rhythm_loss = compute_rhythm_consistency_loss(predictions, targets)
-    
-    # 总损失
-    total_loss = (
-        weights["type"] * type_loss + 
-        weights["position"] * position_loss + 
-        weights["time"] * time_loss + 
-        weights["rhythm"] * rhythm_loss
-    )
-    
-    return total_loss, {
-        "type_loss": type_loss.item(),
-        "position_loss": position_loss.item(),
-        "time_loss": time_loss.item(),
-        "rhythm_loss": rhythm_loss.item(),
-        "total_loss": total_loss.item()
-    }
+from models.transformer import TransformerModel
+from models.evaluation import Evaluator
+from models.config import NORMAL_CONFIG
+import torch
+
+# 加载模型
+model = TransformerModel(
+    input_dim=NORMAL_CONFIG.input_dim,
+    d_model=NORMAL_CONFIG.d_model,
+    output_dim=NORMAL_CONFIG.output_dim,
+    nhead=NORMAL_CONFIG.nhead,
+    num_encoder_layers=NORMAL_CONFIG.num_encoder_layers,
+    num_decoder_layers=NORMAL_CONFIG.num_decoder_layers,
+    dim_feedforward=NORMAL_CONFIG.dim_feedforward,
+    dropout=NORMAL_CONFIG.dropout
+)
+
+# 加载模型权重
+checkpoint = torch.load("path/to/model.pth", map_location="cpu")
+model.load_state_dict(checkpoint["model_state_dict"])
+
+# 创建评估器
+evaluator = Evaluator(model=model, device="cuda")
+
+# 加载音频特征
+audio_features = torch.load("path/to/audio_features.pt")
+
+# 生成谱面
+beatmap_sequence = evaluator.generate_beatmap(
+    audio_features=audio_features,
+    max_length=500,
+    temperature=1.0
+)
+
+# 可视化谱面
+evaluator.visualize_beatmap(
+    beatmap_sequence=beatmap_sequence,
+    save_path="generated_beatmap.png"
+)
+
+# 转换为OSU格式
+osu_content = evaluator.convert_to_osu_format(
+    beatmap_sequence=beatmap_sequence,
+    audio_path="path/to/audio.mp3",
+    title="Song Title",
+    artist="Artist Name",
+    creator="AI Generator",
+    version="Normal"
+)
+
+# 保存OSU文件
+evaluator.save_osu_file(osu_content, "generated_beatmap.osu")
 ```
 
-## 训练流程
+## 配置说明
 
-### 训练参数
+模型配置参数存储在`config.py`中，提供了不同难度级别的预设配置：
 
-- **批次大小**：16-32（取决于可用GPU内存）
-- **学习率**：0.0005，使用余弦退火调度
-- **优化器**：Adam (β1=0.9, β2=0.999, ε=1e-8)
-- **训练周期**：50-100轮
-- **梯度裁剪**：最大范数 1.0
-- **正则化**：权重衰减 1e-5，Dropout 0.1
+- `EASY_CONFIG` - 适用于简单难度谱面生成的小型模型
+- `NORMAL_CONFIG` - 适用于一般难度谱面生成的中型模型（默认）
+- `HARD_CONFIG` - 适用于困难难度谱面生成的大型模型
+- `EXPERT_CONFIG` - 适用于专家难度谱面生成的超大型模型
 
-### 训练配置
+训练配置也提供了不同的预设：
+
+- `DEFAULT_TRAINING_CONFIG` - 默认训练配置
+- `FAST_TRAINING_CONFIG` - 快速训练配置，用于原型开发
+- `FULL_TRAINING_CONFIG` - 完整训练配置，用于最终模型训练
+
+## 数据集格式
+
+训练数据集应该是JSON格式，包含谱面分析结果和对应的音频特征。详细格式请参考[数据集格式文档](../数据集格式.txt)。
+
+## 模型保存格式
+
+模型检查点包含以下内容：
 
 ```python
-training_config = {
-    # 数据配置
-    "train_data_path": "data/processed/train",
-    "val_data_path": "data/processed/val",
-    "batch_size": 16,
-    "num_workers": 4,
-    
-    # 模型配置
-    "feature_dim": 128,
-    "hidden_dim": 256,
-    "n_encoder_layers": 4,
-    "n_decoder_layers": 4,
-    "nhead": 8,
-    "dropout": 0.1,
-    
-    # 优化器配置
-    "learning_rate": 5e-4,
-    "weight_decay": 1e-5,
-    "betas": (0.9, 0.999),
-    "eps": 1e-8,
-    
-    # 训练配置
-    "epochs": 50,
-    "grad_clip": 1.0,
-    "early_stopping_patience": 10,
-    
-    # 损失权重
-    "loss_weights": {
-        "type": 1.0,
-        "position": 1.0,
-        "time": 1.0,
-        "rhythm": 0.5
-    },
-    
-    # 杂项
-    "seed": 42,
-    "device": "cuda" if torch.cuda.is_available() else "cpu",
-    "use_mixed_precision": True,
-    "log_interval": 10,
-    "checkpoint_dir": "models/checkpoints"
+{
+    "model_state_dict": model.state_dict(),  # 模型参数
+    "optimizer_state_dict": optimizer.state_dict(),  # 优化器状态
+    "scheduler_state_dict": scheduler.state_dict(),  # 学习率调度器状态
+    "epoch": current_epoch,  # 当前训练轮次
+    "best_val_loss": best_val_loss,  # 最佳验证损失
+    "train_losses": train_losses,  # 训练损失历史
+    "val_losses": val_losses  # 验证损失历史
 }
 ```
 
-### 训练循环
+## 依赖项
 
-训练循环将包括：
-
-1. 数据加载与预处理
-2. 前向传播
-3. 损失计算
-4. 反向传播与优化
-5. 模型评估
-6. 检查点保存
-
-## 评估方法
-
-### 定量评估指标
-
-1. **生成准确率**：生成的谱面物件与基准谱面的匹配程度
-2. **节奏一致性**：谱面物件与音乐节拍的对齐程度
-3. **难度准确性**：生成谱面的难度与目标难度的接近程度
-4. **游戏规则兼容性**：生成谱面符合游戏规则的程度
-
-### 定性评估
-
-1. **可玩性评估**：由测试玩家评分
-2. **谱面流畅性**：物件排布的自然度和连贯性
-3. **音乐表现力**：谱面对音乐特点的表达程度
-
-## 目录结构与文件规划
-
-```
-models/
-├── README.md                   # 本文档
-├── transformer.py              # Transformer模型实现
-├── positional_encoding.py      # 位置编码实现
-├── loss.py                     # 损失函数实现
-├── training.py                 # 训练循环实现
-├── evaluation.py               # 评估方法实现
-├── inference.py                # 推理与生成实现
-├── utils/                      # 工具函数
-│   ├── __init__.py
-│   ├── data.py                 # 数据处理工具
-│   ├── metrics.py              # 评估指标工具
-│   └── visualization.py        # 可视化工具
-├── checkpoints/                # 模型检查点保存目录
-│   └── README.md               # 检查点说明
-└── configs/                    # 配置文件目录
-    ├── default.json            # 默认配置
-    ├── small.json              # 小型模型配置
-    └── large.json              # 大型模型配置
-```
-
-## 实施计划
-
-1. **基础架构实现**（3天）
-   - 实现基本的Transformer模型架构
-   - 实现位置编码和嵌入层
-
-2. **数据接口开发**（2天）
-   - 实现数据加载和预处理接口
-   - 创建训练样本生成器
-
-3. **训练循环实现**（3天）
-   - 实现完整训练循环
-   - 添加评估和检查点功能
-
-4. **损失函数设计**（2天）
-   - 实现基本损失函数
-   - 开发节奏一致性损失
-
-5. **推理与生成**（3天）
-   - 实现自回归解码
-   - 开发谱面后处理功能
-
-6. **评估与优化**（2天）
-   - 实现评估指标
-   - 进行初步模型调优
-
-## 后续优化方向
-
-1. **探索更复杂的编码器架构**，如CNN+Transformer混合模型
-2. **实现注意力可视化**，增强模型可解释性
-3. **添加流派感知特征**，针对不同音乐风格优化生成
-4. **实现渐进式难度生成**，改进多难度谱面的设计
-5. **探索强化学习优化**，使用玩家反馈优化生成模型
-
-## 风险与挑战
-
-1. **数据不足**：高质量谱面数据可能不足以训练复杂模型
-2. **训练不稳定**：Transformer模型训练可能不稳定
-3. **泛化能力**：模型在未见过的音乐类型上可能表现不佳
-4. **计算资源**：完整训练可能需要大量GPU资源
-
-## 结论
-
-本文档提供了osu!风格谱面生成器中深度学习模型的详细实现计划。基于Transformer架构的模型设计旨在捕捉音频特征与谱面设计之间的复杂关系，生成高质量、符合游戏规则的谱面。实施计划分步骤推进，确保系统化开发和全面测试。 
+- PyTorch >= 1.9.0
+- NumPy
+- Matplotlib
+- tqdm 

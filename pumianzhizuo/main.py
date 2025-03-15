@@ -6,8 +6,15 @@ osu!风格的谱面生成器主程序入口
 """
 
 import sys
+import os
+
+# 将项目根目录添加到Python路径中
+current_dir = os.path.dirname(os.path.abspath(__file__))
+root_dir = os.path.dirname(os.path.dirname(current_dir))  # 获取根目录
+sys.path.insert(0, root_dir)  # 将根目录添加到路径中
+
 from PyQt5.QtWidgets import QApplication
-from gui.main_window import OsuStyleMainWindow
+from gui.main_window import OsuStyleMainWindow  # 恢复原来的导入
 
 
 def main():

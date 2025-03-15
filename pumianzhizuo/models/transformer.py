@@ -2,448 +2,373 @@
 # -*- coding: utf-8 -*-
 
 """
-谱面生成器Transformer模型实现
+Transformer模型 - 用于谱面生成的深度学习模型
 """
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import numpy as np
 import math
-from typing import Dict, Optional, Tuple, List
-
-from .positional_encoding import PositionalEncoding
+from typing import Dict, List, Tuple, Optional, Union
 
 
-class FeatureEncoder(nn.Module):
+class PositionalEncoding(nn.Module):
+    """
+    位置编码模块
+    
+    将序列中元素的位置信息编码为向量，然后与元素的特征向量相加
+    """
+    
+    def __init__(self, d_model: int, max_seq_length: int = 5000):
+        """
+        初始化位置编码模块
+        
+        参数:
+            d_model: 模型的维度
+            max_seq_length: 最大序列长度
+        """
+        super().__init__()
+        
+        # 创建位置编码矩阵
+        position = torch.arange(max_seq_length).unsqueeze(1).float()
+        div_term = torch.exp(torch.arange(0, d_model, 2).float() * (-math.log(10000.0) / d_model))
+        
+        pe = torch.zeros(max_seq_length, d_model)
+        pe[:, 0::2] = torch.sin(position * div_term)
+        pe[:, 1::2] = torch.cos(position * div_term)
+        
+        # 注册为buffer（不参与梯度更新）
+        self.register_buffer('pe', pe)
+    
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        前向传播
+        
+        参数:
+            x: 输入张量，形状为 [batch_size, seq_length, d_model]
+            
+        返回:
+            添加了位置编码的张量，形状为 [batch_size, seq_length, d_model]
+        """
+        return x + self.pe[:x.size(1)]
+
+
+class AudioEncoder(nn.Module):
     """
     音频特征编码器
     
-    将原始音频特征转换为模型可处理的隐藏表示。
-    
-    Args:
-        feature_dim (int): 输入特征维度
-        hidden_dim (int): 隐藏层维度
-        dropout (float): Dropout率
+    将音频特征编码为隐藏状态
     """
-    def __init__(self, feature_dim: int, hidden_dim: int, dropout: float = 0.1):
-        super().__init__()
-        self.feature_projection = nn.Sequential(
-            nn.Linear(feature_dim, hidden_dim),
-            nn.LayerNorm(hidden_dim),
-            nn.ReLU(),
-            nn.Dropout(dropout)
-        )
-        self.position_encoder = PositionalEncoding(hidden_dim, dropout)
+    
+    def __init__(self, 
+                 input_dim: int = 128, 
+                 d_model: int = 512, 
+                 nhead: int = 8, 
+                 num_encoder_layers: int = 6,
+                 dim_feedforward: int = 2048, 
+                 dropout: float = 0.1):
+        """
+        初始化音频编码器
         
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        参数:
+            input_dim: 输入特征的维度
+            d_model: Transformer的维度
+            nhead: 多头注意力的头数
+            num_encoder_layers: 编码器层数
+            dim_feedforward: 前馈神经网络的维度
+            dropout: Dropout率
         """
-        Args:
-            x (torch.Tensor): 形状为 [batch_size, seq_length, feature_dim] 的输入特征
+        super().__init__()
+        
+        # 输入特征投影层
+        self.input_projection = nn.Linear(input_dim, d_model)
+        
+        # 位置编码
+        self.pos_encoder = PositionalEncoding(d_model)
+        
+        # Transformer编码器
+        encoder_layer = nn.TransformerEncoderLayer(
+            d_model=d_model, 
+            nhead=nhead, 
+            dim_feedforward=dim_feedforward, 
+            dropout=dropout,
+            batch_first=True
+        )
+        self.transformer_encoder = nn.TransformerEncoder(
+            encoder_layer, 
+            num_layers=num_encoder_layers
+        )
+        
+        # Dropout层
+        self.dropout = nn.Dropout(dropout)
+    
+    def forward(self, src: torch.Tensor, src_mask: Optional[torch.Tensor] = None) -> torch.Tensor:
+        """
+        前向传播
+        
+        参数:
+            src: 输入特征，形状为 [batch_size, seq_length, input_dim]
+            src_mask: 掩码，形状为 [batch_size, seq_length]
             
-        Returns:
-            torch.Tensor: 形状为 [batch_size, seq_length, hidden_dim] 的编码特征
+        返回:
+            编码后的特征，形状为 [batch_size, seq_length, d_model]
         """
-        x = self.feature_projection(x)
-        x = self.position_encoder(x)
-        return x
+        # 投影到模型维度
+        src = self.input_projection(src)
+        
+        # 应用位置编码
+        src = self.pos_encoder(src)
+        
+        # 应用Dropout
+        src = self.dropout(src)
+        
+        # 通过Transformer编码器
+        output = self.transformer_encoder(src, src_key_padding_mask=src_mask)
+        
+        return output
 
 
 class BeatmapDecoder(nn.Module):
     """
     谱面解码器
     
-    将Transformer的输出转换为谱面元素的参数。
-    
-    Args:
-        hidden_dim (int): 隐藏层维度
-        n_object_types (int): 物件类型数量
-        n_positions (int): 离散化的位置数量
-        dropout (float): Dropout率
+    将编码的特征解码为谱面物件序列
     """
-    def __init__(
-        self, 
-        hidden_dim: int, 
-        n_object_types: int = 4, 
-        n_positions: int = 100,
-        dropout: float = 0.1
-    ):
+    
+    def __init__(self, 
+                 d_model: int = 512, 
+                 output_dim: int = 64, 
+                 nhead: int = 8, 
+                 num_decoder_layers: int = 6,
+                 dim_feedforward: int = 2048, 
+                 dropout: float = 0.1):
+        """
+        初始化谱面解码器
+        
+        参数:
+            d_model: Transformer的维度
+            output_dim: 输出特征的维度
+            nhead: 多头注意力的头数
+            num_decoder_layers: 解码器层数
+            dim_feedforward: 前馈神经网络的维度
+            dropout: Dropout率
+        """
         super().__init__()
         
-        # 共享特征提取层
-        self.feature_extractor = nn.Sequential(
-            nn.Linear(hidden_dim, hidden_dim // 2),
-            nn.LayerNorm(hidden_dim // 2),
-            nn.ReLU(),
-            nn.Dropout(dropout)
-        )
-        
-        # 物件类型预测头
-        self.object_type_head = nn.Linear(hidden_dim // 2, n_object_types)
-        
-        # 位置预测头 - 预测离散化的x坐标和y坐标
-        self.position_head = nn.Linear(hidden_dim // 2, n_positions * 2)
-        
-        # 时间偏移预测头 - 相对于节拍的时间偏移
-        self.time_offset_head = nn.Linear(hidden_dim // 2, 1)
-        
-        # 滑条长度预测头 (对于滑条类型的物件)
-        self.slider_length_head = nn.Linear(hidden_dim // 2, 1)
-        
-    def forward(self, x: torch.Tensor) -> Dict[str, torch.Tensor]:
-        """
-        Args:
-            x (torch.Tensor): 形状为 [batch_size, seq_length, hidden_dim] 的输入特征
-            
-        Returns:
-            Dict[str, torch.Tensor]: 包含各种预测结果的字典
-                - object_type: 物件类型预测，形状为 [batch_size, seq_length, n_object_types]
-                - position: 位置预测，形状为 [batch_size, seq_length, n_positions*2]
-                - time_offset: 时间偏移预测，形状为 [batch_size, seq_length, 1]
-                - slider_length: 滑条长度预测，形状为 [batch_size, seq_length, 1]
-        """
-        features = self.feature_extractor(x)
-        
-        return {
-            "object_type": self.object_type_head(features),
-            "position": self.position_head(features),
-            "time_offset": self.time_offset_head(features),
-            "slider_length": self.slider_length_head(features)
-        }
-
-
-class BeatmapTransformer(nn.Module):
-    """
-    谱面生成Transformer模型
-    
-    基于Transformer架构的谱面生成模型，将音频特征序列映射到谱面元素序列。
-    
-    Args:
-        feature_dim (int): 输入特征维度
-        hidden_dim (int): 隐藏层维度
-        n_object_types (int): 物件类型数量
-        n_positions (int): 离散化的位置数量
-        n_encoder_layers (int): 编码器层数
-        n_decoder_layers (int): 解码器层数
-        nhead (int): 多头注意力中的头数
-        dropout (float): Dropout率
-    """
-    def __init__(
-        self,
-        feature_dim: int = 128,
-        hidden_dim: int = 256,
-        n_object_types: int = 4,
-        n_positions: int = 100,
-        n_encoder_layers: int = 4,
-        n_decoder_layers: int = 4,
-        nhead: int = 8,
-        dropout: float = 0.1
-    ):
-        super().__init__()
-        
-        # 特征编码器
-        self.feature_encoder = FeatureEncoder(feature_dim, hidden_dim, dropout)
-        
-        # Transformer编码器
-        encoder_layer = nn.TransformerEncoderLayer(
-            d_model=hidden_dim,
-            nhead=nhead,
-            dim_feedforward=hidden_dim*4,
-            dropout=dropout,
-            batch_first=True
-        )
-        self.transformer_encoder = nn.TransformerEncoder(
-            encoder_layer, 
-            num_layers=n_encoder_layers
-        )
+        # 位置编码
+        self.pos_encoder = PositionalEncoding(d_model)
         
         # Transformer解码器
         decoder_layer = nn.TransformerDecoderLayer(
-            d_model=hidden_dim,
-            nhead=nhead,
-            dim_feedforward=hidden_dim*4,
+            d_model=d_model, 
+            nhead=nhead, 
+            dim_feedforward=dim_feedforward, 
             dropout=dropout,
             batch_first=True
         )
         self.transformer_decoder = nn.TransformerDecoder(
             decoder_layer, 
-            num_layers=n_decoder_layers
+            num_layers=num_decoder_layers
+        )
+        
+        # 输出投影层
+        self.output_projection = nn.Linear(d_model, output_dim)
+        
+        # Dropout层
+        self.dropout = nn.Dropout(dropout)
+    
+    def forward(self, 
+                tgt: torch.Tensor, 
+                memory: torch.Tensor, 
+                tgt_mask: Optional[torch.Tensor] = None,
+                memory_mask: Optional[torch.Tensor] = None) -> torch.Tensor:
+        """
+        前向传播
+        
+        参数:
+            tgt: 目标序列，形状为 [batch_size, tgt_seq_length, d_model]
+            memory: 编码器的输出，形状为 [batch_size, src_seq_length, d_model]
+            tgt_mask: 目标序列的掩码，形状为 [tgt_seq_length, tgt_seq_length]
+            memory_mask: 记忆的掩码，形状为 [tgt_seq_length, src_seq_length]
+            
+        返回:
+            解码后的特征，形状为 [batch_size, tgt_seq_length, output_dim]
+        """
+        # 应用位置编码
+        tgt = self.pos_encoder(tgt)
+        
+        # 应用Dropout
+        tgt = self.dropout(tgt)
+        
+        # 通过Transformer解码器
+        output = self.transformer_decoder(
+            tgt, 
+            memory, 
+            tgt_mask=tgt_mask,
+            memory_mask=memory_mask
+        )
+        
+        # 投影到输出维度
+        output = self.output_projection(output)
+        
+        return output
+
+
+class TransformerModel(nn.Module):
+    """
+    完整的Transformer模型，用于谱面生成
+    
+    包含一个音频编码器和一个谱面解码器
+    """
+    
+    def __init__(self, 
+                 input_dim: int = 128, 
+                 d_model: int = 512, 
+                 output_dim: int = 64,
+                 nhead: int = 8, 
+                 num_encoder_layers: int = 6, 
+                 num_decoder_layers: int = 6,
+                 dim_feedforward: int = 2048, 
+                 dropout: float = 0.1):
+        """
+        初始化Transformer模型
+        
+        参数:
+            input_dim: 输入特征的维度
+            d_model: Transformer的维度
+            output_dim: 输出特征的维度
+            nhead: 多头注意力的头数
+            num_encoder_layers: 编码器层数
+            num_decoder_layers: 解码器层数
+            dim_feedforward: 前馈神经网络的维度
+            dropout: Dropout率
+        """
+        super().__init__()
+        
+        # 音频编码器
+        self.encoder = AudioEncoder(
+            input_dim=input_dim, 
+            d_model=d_model, 
+            nhead=nhead, 
+            num_encoder_layers=num_encoder_layers,
+            dim_feedforward=dim_feedforward, 
+            dropout=dropout
         )
         
         # 谱面解码器
-        self.beatmap_decoder = BeatmapDecoder(
-            hidden_dim, 
-            n_object_types, 
-            n_positions, 
-            dropout
+        self.decoder = BeatmapDecoder(
+            d_model=d_model, 
+            output_dim=output_dim, 
+            nhead=nhead, 
+            num_decoder_layers=num_decoder_layers,
+            dim_feedforward=dim_feedforward, 
+            dropout=dropout
         )
         
         # 目标嵌入层
-        self.object_type_embedding = nn.Embedding(n_object_types, hidden_dim // 4)
-        self.position_embedding = nn.Embedding(n_positions * 2, hidden_dim // 4)
-        self.time_embedding = nn.Linear(1, hidden_dim // 4)
-        self.slider_embedding = nn.Linear(1, hidden_dim // 4)
-        
-        # 输出投影
-        self.output_projection = nn.Linear(hidden_dim, hidden_dim)
+        self.tgt_embedding = nn.Linear(output_dim, d_model)
         
         # 初始化参数
         self._init_parameters()
-        
+    
     def _init_parameters(self):
-        """初始化模型参数"""
+        """
+        初始化模型参数
+        """
         for p in self.parameters():
             if p.dim() > 1:
                 nn.init.xavier_uniform_(p)
-                
+    
+    def forward(self, 
+                src: torch.Tensor, 
+                tgt: torch.Tensor, 
+                src_mask: Optional[torch.Tensor] = None,
+                tgt_mask: Optional[torch.Tensor] = None,
+                memory_mask: Optional[torch.Tensor] = None) -> torch.Tensor:
+        """
+        前向传播
+        
+        参数:
+            src: 源序列，形状为 [batch_size, src_seq_length, input_dim]
+            tgt: 目标序列，形状为 [batch_size, tgt_seq_length, output_dim]
+            src_mask: 源序列的掩码，形状为 [batch_size, src_seq_length]
+            tgt_mask: 目标序列的掩码，形状为 [tgt_seq_length, tgt_seq_length]
+            memory_mask: 记忆的掩码，形状为 [tgt_seq_length, src_seq_length]
+            
+        返回:
+            输出序列，形状为 [batch_size, tgt_seq_length, output_dim]
+        """
+        # 编码
+        memory = self.encoder(src, src_mask)
+        
+        # 目标序列嵌入
+        tgt = self.tgt_embedding(tgt)
+        
+        # 解码
+        output = self.decoder(tgt, memory, tgt_mask, memory_mask)
+        
+        return output
+    
+    def generate(self, 
+                 src: torch.Tensor, 
+                 max_length: int = 1000, 
+                 temperature: float = 1.0,
+                 src_mask: Optional[torch.Tensor] = None) -> torch.Tensor:
+        """
+        生成谱面
+        
+        参数:
+            src: 源序列，形状为 [batch_size, src_seq_length, input_dim]
+            max_length: 生成的最大长度
+            temperature: 温度参数，控制采样的随机性
+            src_mask: 源序列的掩码，形状为 [batch_size, src_seq_length]
+            
+        返回:
+            生成的序列，形状为 [batch_size, gen_seq_length, output_dim]
+        """
+        batch_size = src.size(0)
+        device = src.device
+        
+        # 编码
+        memory = self.encoder(src, src_mask)
+        
+        # 初始化目标序列
+        tgt = torch.zeros(batch_size, 1, self.decoder.output_projection.out_features, device=device)
+        
+        # 生成序列
+        for i in range(max_length - 1):
+            # 创建三角形掩码
+            tgt_mask = self._generate_square_subsequent_mask(i + 1).to(device)
+            
+            # 目标序列嵌入
+            tgt_emb = self.tgt_embedding(tgt)
+            
+            # 解码
+            output = self.decoder(tgt_emb, memory, tgt_mask)
+            
+            # 获取下一个词的预测
+            next_item = output[:, -1:, :]
+            
+            # 应用温度
+            if temperature != 1.0:
+                next_item = next_item / temperature
+            
+            # 连接到目标序列
+            tgt = torch.cat([tgt, next_item], dim=1)
+        
+        return tgt[:, 1:]  # 去掉初始的零向量
+    
     def _generate_square_subsequent_mask(self, sz: int) -> torch.Tensor:
-        """生成方形上三角掩码，用于解码器自注意力"""
+        """
+        生成方形的后续掩码
+        
+        参数:
+            sz: 掩码的大小
+            
+        返回:
+            形状为 [sz, sz] 的掩码
+        """
         mask = (torch.triu(torch.ones(sz, sz)) == 1).transpose(0, 1)
         mask = mask.float().masked_fill(mask == 0, float('-inf')).masked_fill(mask == 1, float(0.0))
-        return mask
-    
-    def process_targets(self, target_seq: torch.Tensor) -> torch.Tensor:
-        """
-        处理目标序列，转换为嵌入向量
-        
-        Args:
-            target_seq (torch.Tensor): 形状为 [batch_size, seq_length, feature_count] 的目标序列
-                feature_count应该包含：[object_type, pos_x, pos_y, time, slider_length]
-                
-        Returns:
-            torch.Tensor: 形状为 [batch_size, seq_length, hidden_dim] 的嵌入向量
-        """
-        # 提取各特征
-        object_type = target_seq[:, :, 0].long()
-        pos_x = target_seq[:, :, 1].long()
-        pos_y = target_seq[:, :, 2].long()
-        time = target_seq[:, :, 3:4]
-        slider_length = target_seq[:, :, 4:5]
-        
-        # 嵌入各特征
-        object_embeds = self.object_type_embedding(object_type)
-        pos_x_embeds = self.position_embedding(pos_x)
-        pos_y_embeds = self.position_embedding(pos_y + self.position_embedding.num_embeddings // 2)  # 偏移y坐标的嵌入索引
-        time_embeds = self.time_embedding(time)
-        slider_embeds = self.slider_embedding(slider_length)
-        
-        # 组合所有嵌入
-        combined_embeds = torch.cat([
-            object_embeds, pos_x_embeds, pos_y_embeds, time_embeds, slider_embeds
-        ], dim=-1)
-        
-        return combined_embeds
-    
-    def forward(
-        self, 
-        audio_features: torch.Tensor,
-        target_seq: Optional[torch.Tensor] = None,
-        target_padding_mask: Optional[torch.Tensor] = None
-    ) -> Dict[str, torch.Tensor]:
-        """
-        模型前向传播
-        
-        Args:
-            audio_features (torch.Tensor): 形状为 [batch_size, seq_length, feature_dim] 的音频特征
-            target_seq (Optional[torch.Tensor]): 训练时的目标序列，形状为 [batch_size, tgt_length, feature_count]
-            target_padding_mask (Optional[torch.Tensor]): 目标序列的填充掩码
-            
-        Returns:
-            Dict[str, torch.Tensor]: 模型预测结果
-        """
-        # 编码音频特征
-        memory_key_padding_mask = None  # 可选：为音频特征添加填充掩码
-        
-        # 特征编码
-        memory = self.feature_encoder(audio_features)
-        
-        # Transformer编码器
-        memory = self.transformer_encoder(
-            memory, 
-            src_key_padding_mask=memory_key_padding_mask
-        )
-        
-        if self.training and target_seq is not None:
-            # 训练模式：Teacher forcing
-            
-            # 处理目标序列
-            tgt = self.process_targets(target_seq)
-            
-            # 创建目标序列掩码（上三角掩码，防止看到未来信息）
-            tgt_mask = self._generate_square_subsequent_mask(tgt.size(1)).to(tgt.device)
-            
-            # Transformer解码器
-            output = self.transformer_decoder(
-                tgt, 
-                memory, 
-                tgt_mask=tgt_mask,
-                tgt_key_padding_mask=target_padding_mask,
-                memory_key_padding_mask=memory_key_padding_mask
-            )
-            
-            # 输出投影
-            output = self.output_projection(output)
-            
-            # 谱面解码器
-            return self.beatmap_decoder(output)
-        else:
-            # 推理模式：自回归生成
-            return self.generate(memory, memory_key_padding_mask)
-    
-    def generate(
-        self, 
-        memory: torch.Tensor,
-        memory_key_padding_mask: Optional[torch.Tensor] = None,
-        max_length: int = 1000, 
-        temperature: float = 1.0,
-        eos_token: int = 0  # 假设0为结束符
-    ) -> Dict[str, torch.Tensor]:
-        """
-        自回归生成谱面序列
-        
-        Args:
-            memory (torch.Tensor): 编码器输出，形状为 [batch_size, src_length, hidden_dim]
-            memory_key_padding_mask (Optional[torch.Tensor]): 记忆填充掩码
-            max_length (int): 生成的最大长度
-            temperature (float): 采样温度，值越大随机性越强
-            eos_token (int): 结束符的token ID
-            
-        Returns:
-            Dict[str, torch.Tensor]: 生成的谱面序列
-        """
-        batch_size = memory.size(0)
-        device = memory.device
-        
-        # 初始化结果存储
-        results = {
-            "object_type": [],
-            "position": [],
-            "time_offset": [],
-            "slider_length": []
-        }
-        
-        # 初始化首个token（起始符或特殊符号）
-        # 这个设计需要根据具体应用场景调整
-        object_type = torch.ones(batch_size, 1).long().to(device)  # 假设1为起始符
-        pos_x = torch.zeros(batch_size, 1).long().to(device)
-        pos_y = torch.zeros(batch_size, 1).long().to(device)
-        time = torch.zeros(batch_size, 1, 1).to(device)
-        slider_length = torch.zeros(batch_size, 1, 1).to(device)
-        
-        # 构建初始序列
-        current_seq = torch.cat([
-            object_type.unsqueeze(-1), 
-            pos_x.unsqueeze(-1), 
-            pos_y.unsqueeze(-1), 
-            time, 
-            slider_length
-        ], dim=-1)
-        
-        # 生成掩码
-        tgt_mask = self._generate_square_subsequent_mask(1).to(device)
-        
-        # 是否继续生成的标志，每个样本独立
-        is_generating = torch.ones(batch_size, dtype=torch.bool).to(device)
-        
-        for i in range(max_length):
-            # 只处理仍在生成的样本
-            if not is_generating.any():
-                break
-                
-            # 处理当前序列
-            tgt_embeddings = self.process_targets(current_seq)
-            
-            # 使用Transformer解码器
-            output = self.transformer_decoder(
-                tgt_embeddings, 
-                memory, 
-                tgt_mask=tgt_mask,
-                memory_key_padding_mask=memory_key_padding_mask
-            )
-            
-            # 输出投影
-            output = self.output_projection(output)
-            
-            # 谱面解码
-            predictions = self.beatmap_decoder(output)
-            
-            # 仅获取最后一个时间步的预测
-            last_predictions = {k: v[:, -1:, :] for k, v in predictions.items()}
-            
-            # 对预测进行采样或argmax
-            object_type_probs = F.softmax(last_predictions["object_type"] / temperature, dim=-1)
-            sampled_object_type = torch.multinomial(object_type_probs.view(batch_size, -1), 1)
-            
-            # 根据当前生成的物件类型选择合适的位置和时间
-            # 简化实现：取argmax
-            position_logits = last_predictions["position"].view(batch_size, 1, -1)
-            sampled_position = torch.argmax(position_logits, dim=-1)
-            pos_x = sampled_position % self.position_embedding.num_embeddings
-            pos_y = sampled_position // self.position_embedding.num_embeddings
-            
-            time_offset = last_predictions["time_offset"]
-            slider_length = last_predictions["slider_length"]
-            
-            # 将新生成的token添加到结果中
-            results["object_type"].append(sampled_object_type)
-            results["position"].append(position_logits)
-            results["time_offset"].append(time_offset)
-            results["slider_length"].append(slider_length)
-            
-            # 更新生成状态
-            is_generating = is_generating & (sampled_object_type.squeeze(-1) != eos_token)
-            
-            # 准备下一个时间步的输入
-            new_seq = torch.cat([
-                sampled_object_type.unsqueeze(-1),
-                pos_x.unsqueeze(-1),
-                pos_y.unsqueeze(-1),
-                time_offset,
-                slider_length
-            ], dim=-1)
-            
-            current_seq = torch.cat([current_seq, new_seq], dim=1)
-            
-            # 更新掩码大小
-            tgt_mask = self._generate_square_subsequent_mask(current_seq.size(1)).to(device)
-        
-        # 将结果转换为张量
-        for k in results:
-            results[k] = torch.cat(results[k], dim=1)
-            
-        return results
-
-
-# 简单测试代码
-if __name__ == "__main__":
-    # 创建测试输入
-    batch_size = 2
-    src_length = 100
-    feature_dim = 128
-    tgt_length = 20
-    hidden_dim = 256
-    
-    audio_features = torch.rand(batch_size, src_length, feature_dim)
-    target_seq = torch.rand(batch_size, tgt_length, 5)  # [object_type, pos_x, pos_y, time, slider_length]
-    target_seq[:, :, 0] = torch.randint(0, 4, (batch_size, tgt_length))  # 物件类型
-    target_seq[:, :, 1] = torch.randint(0, 100, (batch_size, tgt_length))  # x坐标
-    target_seq[:, :, 2] = torch.randint(0, 100, (batch_size, tgt_length))  # y坐标
-    
-    # 创建模型
-    model = BeatmapTransformer(
-        feature_dim=feature_dim,
-        hidden_dim=hidden_dim
-    )
-    
-    # 测试训练模式
-    print("Testing training mode...")
-    outputs = model(audio_features, target_seq)
-    for k, v in outputs.items():
-        print(f"{k}: {v.shape}")
-    
-    # 测试推理模式
-    print("\nTesting inference mode...")
-    outputs = model(audio_features)
-    for k, v in outputs.items():
-        print(f"{k}: {v.shape}")
-        
-    print("\nAll tests passed!") 
+        return mask 

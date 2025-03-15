@@ -2,20 +2,9 @@
 # -*- coding: utf-8 -*-
 
 """
-osu!风格谱面生成器 - 模型模块
+模型模块 - 包含所有与深度学习模型相关的代码
 """
 
-from .positional_encoding import PositionalEncoding, LearnablePositionalEncoding, RelativePositionalEncoding
-from .transformer import BeatmapTransformer, FeatureEncoder, BeatmapDecoder
-
-__all__ = [
-    'PositionalEncoding',
-    'LearnablePositionalEncoding',
-    'RelativePositionalEncoding',
-    'BeatmapTransformer',
-    'FeatureEncoder',
-    'BeatmapDecoder'
-]
-
-# 版本信息
-__version__ = '0.1.0' 
+from .transformer import TransformerModel
+from .training import Trainer
+from .evaluation import Evaluator 

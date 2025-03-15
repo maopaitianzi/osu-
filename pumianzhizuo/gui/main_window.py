@@ -26,174 +26,8 @@ from audio.visualizer import AudioVisualizer
 # 导入谱面分析模块
 from beatmap.analyzer import BeatmapAnalyzer
 
-
-class TrainingThread(QtCore.QThread):
-    """模型训练线程类"""
-    # 定义信号
-    progress_updated = QtCore.pyqtSignal(int)  # 进度更新信号
-    epoch_completed = QtCore.pyqtSignal(int, float, float)  # 周期完成信号(epoch, train_loss, val_loss)
-    training_finished = QtCore.pyqtSignal(bool, str)  # 训练完成信号(成功/失败, 消息)
-    training_log = QtCore.pyqtSignal(str)  # 训练日志信号
-    
-    def __init__(self, training_params):
-        """初始化训练线程"""
-        super().__init__()
-        self.training_params = training_params
-        self.is_running = False
-        self.is_paused = False
-    
-    def run(self):
-        """运行训练过程"""
-        self.is_running = True
-        self.is_paused = False
-        
-        try:
-            # 解析训练参数
-            model_architecture = self.training_params.get('model_architecture', 'Transformer')
-            training_data_path = self.training_params.get('training_data_path', '')
-            validation_data_path = self.training_params.get('validation_data_path', '')
-            model_output_path = self.training_params.get('model_output_path', '')
-            batch_size = self.training_params.get('batch_size', 16)
-            learning_rate = self.training_params.get('learning_rate', 0.001)
-            epochs = self.training_params.get('epochs', 50)
-            use_early_stopping = self.training_params.get('use_early_stopping', True)
-            use_checkpoint = self.training_params.get('use_checkpoint', True)
-            use_mixed_precision = self.training_params.get('use_mixed_precision', True)
-            use_gpu = self.training_params.get('use_gpu', False)
-            gpu_device = self.training_params.get('gpu_device', 0)
-            
-            # 设置训练设备
-            if use_gpu and torch.cuda.is_available():
-                if gpu_device < torch.cuda.device_count():
-                    device = torch.device(f'cuda:{gpu_device}')
-                    self.training_log.emit(f"使用GPU训练: {torch.cuda.get_device_name(gpu_device)}")
-                else:
-                    device = torch.device('cuda:0')
-                    self.training_log.emit(f"指定的GPU设备不存在，使用默认GPU设备: {torch.cuda.get_device_name(0)}")
-                
-                # 输出GPU信息
-                gpu_properties = torch.cuda.get_device_properties(device)
-                self.training_log.emit(f"GPU内存: {gpu_properties.total_memory / 1024 / 1024 / 1024:.2f} GB")
-                self.training_log.emit(f"CUDA版本: {torch.version.cuda}")
-                
-                # 检查是否支持混合精度训练
-                if use_mixed_precision and not torch.cuda.is_bf16_supported() and not torch.cuda.is_fp16_supported():
-                    self.training_log.emit("警告: 当前GPU不支持混合精度训练，已禁用此功能")
-                    use_mixed_precision = False
-            else:
-                if use_gpu and not torch.cuda.is_available():
-                    self.training_log.emit("警告: 未检测到可用的GPU，将使用CPU训练")
-                device = torch.device('cpu')
-                self.training_log.emit("使用CPU训练")
-                
-                # 在CPU上禁用混合精度训练
-                if use_mixed_precision:
-                    self.training_log.emit("警告: CPU不支持混合精度训练，已禁用此功能")
-                    use_mixed_precision = False
-            
-            # 模拟训练过程
-            self.training_log.emit(f"开始加载训练数据: {training_data_path}")
-            time.sleep(1)  # 模拟数据加载
-            self.progress_updated.emit(5)
-            
-            self.training_log.emit(f"创建{model_architecture}模型")
-            time.sleep(1)  # 模拟模型创建
-            self.progress_updated.emit(10)
-            
-            # 设置混合精度训练
-            if use_mixed_precision and device.type == 'cuda':
-                self.training_log.emit("启用混合精度训练")
-                # 在实际项目中，这里应该使用torch.cuda.amp.GradScaler()
-                scaler = "GradScaler实例"  # 仅作为示例
-            
-            # 模拟训练循环
-            for epoch in range(1, epochs + 1):
-                if not self.is_running:
-                    self.training_log.emit("训练被用户终止")
-                    break
-                
-                # 等待如果暂停
-                while self.is_paused and self.is_running:
-                    time.sleep(0.1)
-                
-                # 模拟训练过程
-                self.training_log.emit(f"Epoch {epoch}/{epochs}:")
-                
-                # 模拟批次训练
-                n_batches = 10  # 模拟10个批次
-                for batch in range(1, n_batches + 1):
-                    if not self.is_running:
-                        break
-                    
-                    # 等待如果暂停
-                    while self.is_paused and self.is_running:
-                        time.sleep(0.1)
-                    
-                    # 模拟批次训练
-                    time.sleep(0.1)
-                    self.training_log.emit(f"  Batch {batch}/{n_batches}")
-                
-                # 计算模拟损失 - GPU训练时收敛通常更快
-                if device.type == 'cuda':
-                    # GPU训练模拟更快的收敛
-                    train_loss = 1.8 * np.exp(-0.15 * epoch) + 0.3 * np.random.random()
-                else:
-                    # CPU训练模拟较慢的收敛
-                    train_loss = 2.0 * np.exp(-0.1 * epoch) + 0.5 * np.random.random()
-                
-                # 计算模拟验证损失
-                if use_early_stopping and validation_data_path:
-                    if device.type == 'cuda':
-                        val_loss = 1.9 * np.exp(-0.12 * epoch) + 0.5 * np.random.random()
-                    else:
-                        val_loss = 2.2 * np.exp(-0.08 * epoch) + 0.7 * np.random.random()
-                    self.training_log.emit(f"  训练损失: {train_loss:.4f}, 验证损失: {val_loss:.4f}")
-                else:
-                    val_loss = None
-                    self.training_log.emit(f"  训练损失: {train_loss:.4f}")
-                
-                # 发出周期完成信号
-                self.epoch_completed.emit(epoch, train_loss, val_loss)
-                
-                # 更新进度条
-                progress = int(10 + 85 * epoch / epochs)
-                self.progress_updated.emit(progress)
-                
-                # 模拟检查点保存
-                if use_checkpoint and epoch % 5 == 0:
-                    self.training_log.emit(f"保存检查点: epoch_{epoch}.pt")
-                
-                # 模拟早停
-                if use_early_stopping and val_loss is not None and val_loss < 0.3:
-                    self.training_log.emit("触发早停: 验证损失已达到目标")
-                    break
-            
-            # 模拟保存最终模型
-            final_model_path = os.path.join(model_output_path, f"{model_architecture}_final.pt")
-            self.training_log.emit(f"保存最终模型: {final_model_path}")
-            time.sleep(1)  # 模拟保存时间
-            
-            self.progress_updated.emit(100)
-            self.training_finished.emit(True, "训练完成")
-            
-        except Exception as e:
-            self.training_log.emit(f"训练出错: {str(e)}")
-            self.training_finished.emit(False, f"训练失败: {str(e)}")
-        
-        finally:
-            self.is_running = False
-    
-    def pause(self):
-        """暂停训练"""
-        self.is_paused = True
-    
-    def resume(self):
-        """恢复训练"""
-        self.is_paused = False
-    
-    def stop(self):
-        """停止训练"""
-        self.is_running = False
+# 在import部分添加以下导入
+from gui.training_thread import TrainingThread
 
 
 class OsuStyleMainWindow(QtWidgets.QMainWindow):
@@ -228,6 +62,9 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
         
         # 记住上次使用的导出格式
         self.last_export_format = "JSON文件 (*.json)"
+        
+        # 添加对init_training_signals的调用
+        self.init_training_signals()
 
     def setup_appearance(self):
         """设置外观样式"""
@@ -2937,13 +2774,27 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
         }
         
         # 创建并启动训练线程
-        self.training_thread = TrainingThread(training_params)
+        self.training_thread = TrainingThread(
+            dataset_root=dataset_root_path,
+            model_save_path=model_output_path,
+            model_type=model_architecture,
+            batch_size=batch_size,
+            learning_rate=learning_rate,
+            epochs=epochs,
+            use_gpu=use_gpu,
+            gpu_device=gpu_device,
+            use_early_stopping=use_early_stopping,
+            use_checkpoint=use_checkpoint,
+            use_mixed_precision=use_mixed_precision
+        )
         
         # 连接信号
         self.training_thread.progress_updated.connect(self.update_training_progress)
         self.training_thread.epoch_completed.connect(self.update_training_plot)
         self.training_thread.training_finished.connect(self.handle_training_finished)
-        self.training_thread.training_log.connect(self.add_training_log)
+        self.training_thread.log_message.connect(self.add_training_log)
+        self.training_thread.status_updated.connect(self.update_training_status)
+        self.training_thread.plot_updated.connect(self.update_plot_from_pixmap)
         
         # 启动线程
         self.training_thread.start()
@@ -3006,13 +2857,13 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
             
         if self.training_thread.is_paused:
             # 恢复训练
-            self.training_thread.resume()
+            self.training_thread.resume_training()
             self.pause_resume_btn.setText("暂停训练")
             self.training_status_label.setText("训练正在进行")
             self.add_training_log("训练已恢复")
         else:
             # 暂停训练
-            self.training_thread.pause()
+            self.training_thread.pause_training()
             self.pause_resume_btn.setText("继续训练")
             self.training_status_label.setText("训练已暂停")
             self.add_training_log("训练已暂停")
@@ -3030,7 +2881,7 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
         
         if reply == QtWidgets.QMessageBox.Yes:
             # 停止训练线程
-            self.training_thread.stop()
+            self.training_thread.stop_training()
             self.add_training_log("正在停止训练...")
             
             # 等待线程结束
@@ -3225,6 +3076,40 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
                 self.add_training_log("警告: 未检测到验证集文件夹 (val)")
             # 如果缺少必要的子文件夹，禁用训练按钮
             self.start_training_btn.setEnabled(False)
+
+    # 在MainWindow类中添加init_training_signals方法定义
+    def init_training_signals(self):
+        """
+        初始化训练信号连接
+        """
+        # 目前没有训练线程，初始化为None
+        self.training_thread = None
+        
+        # 简单初始化，不调用不存在的方法
+        print("训练信号初始化完成")
+
+    def update_training_status(self, status):
+        """更新训练状态标签"""
+        self.training_status_label.setText(status)
+        
+    def update_plot_from_pixmap(self, pixmap):
+        """从QPixmap更新训练图表"""
+        try:
+            # 清除当前布局中的所有小部件
+            for i in reversed(range(self.training_plot_layout.count())): 
+                widget = self.training_plot_layout.itemAt(i).widget()
+                if widget:
+                    widget.setParent(None)
+            
+            # 创建一个QLabel来显示pixmap
+            label = QtWidgets.QLabel()
+            label.setPixmap(pixmap)
+            label.setScaledContents(True)
+            
+            # 将标签添加到布局中
+            self.training_plot_layout.addWidget(label)
+        except Exception as e:
+            self.add_training_log(f"更新图表失败: {str(e)}")
 
 def main():
     """程序入口函数"""

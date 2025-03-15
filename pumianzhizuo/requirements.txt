@@ -1,29 +1,26 @@
-# Core dependencies
-numpy==1.22.4
-torch==2.0.1
-librosa==0.10.0
-matplotlib==3.7.1
-tqdm==4.65.0
+# 核心深度学习框架
+torch==2.5.1+cu121
+torchaudio==2.5.1+cu121
+torchvision==0.20.1+cu121
+tensorboard==2.19.0
 
-# Audio processing
-soundfile==0.12.1
-audioread==3.0.0
-pyAudio==0.2.13
+# 音频处理库
+librosa==0.11.0
+soundfile==0.13.1
+soxr==0.5.0.post1
 
-# GUI framework
-PyQt5==5.15.9
+# 数据处理与科学计算
+numpy==1.26.0
+pandas==2.1.0
+scipy==1.15.2
+scikit-learn==1.6.1
+matplotlib==3.10.1
+h5py==3.13.0
 
-# Deep learning
-scikit-learn==1.2.2
-transformers==4.29.2
+# 界面与可视化
+PyQt5==5.15.11
+pillow==11.1.0
 
-# Data processing
-pandas==2.0.3
-h5py==3.9.0
-
-# Packaging
-pyinstaller==5.11.0
-
-# Development tools
-black==23.3.0
-pylint==2.17.4 
+# 工具库
+tqdm==4.67.1
+requests==2.32.3 
