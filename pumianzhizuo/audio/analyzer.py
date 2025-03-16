@@ -15,6 +15,13 @@ import matplotlib.pyplot as plt
 from matplotlib.figure import Figure
 from PyQt5 import QtCore
 
+# 导入scipy模块
+import scipy.signal
+from scipy.signal import windows
+
+# 为了兼容性，将windows.hann函数添加到scipy.signal命名空间
+scipy.signal.hann = windows.hann
+
 # 添加GPU加速相关导入
 import torch
 
