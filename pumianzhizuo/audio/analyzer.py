@@ -33,6 +33,23 @@ import tqdm
 # 检查GPU是否可用
 GPU_AVAILABLE = torch.cuda.is_available()
 
+# 导入高级音频分离模型 (MelBand RoFormer)
+try:
+    import melband_roformer
+    from melband_roformer.models import MelBandRoFormer
+    from melband_roformer.processor import AudioProcessor
+    MELBAND_AVAILABLE = True
+except ImportError:
+    MELBAND_AVAILABLE = False
+
+# 导入SCNet XL （如果可用）
+try:
+    import scnetxl
+    from scnetxl.models import SCNetXL
+    SCNETXL_AVAILABLE = True
+except ImportError:
+    SCNETXL_AVAILABLE = False
+
 
 class AudioAnalyzer(QtCore.QObject):
     """
@@ -46,7 +63,7 @@ class AudioAnalyzer(QtCore.QObject):
     - 音频段落检测
     - 过渡点检测（适合osu谱面关键点）
     - GPU加速支持（需要CUDA环境）
-    - 人声分离功能（使用Demucs模型）
+    - 人声分离功能（支持多种模型：Demucs v4, MelBand RoFormer, SCNet XL）
     """
     
     # 定义信号
@@ -54,9 +71,28 @@ class AudioAnalyzer(QtCore.QObject):
     analysis_complete = QtCore.pyqtSignal(dict)  # 分析完成信号，发送结果字典
     analysis_error = QtCore.pyqtSignal(str)  # 分析错误信号
     
-    # 定义音频源优先级选项
+    # 定义音频源优先级选项 - 这是各个音频源的标准名称
     AUDIO_SOURCES = ["vocals", "drums", "bass", "other"]
-    DEFAULT_PRIORITY = ["vocals", "piano", "drums", "other"]
+    
+    # Demucs模型实际输出顺序
+    DEMUCS_SOURCE_ORDER = ["drums", "bass", "other", "vocals"]
+    
+    # 默认优先级
+    DEFAULT_PRIORITY = ["vocals", "drums", "bass", "other"]
+    
+    # 定义可用的人声分离模型
+    SEPARATION_MODELS = {
+        "demucs_v4": "Demucs v4 (标准)",
+        "htdemucs": "Demucs HT (混合变体)",
+        "htdemucs_ft": "Demucs HT 微调版",
+    }
+    
+    # 如果高级模型可用，添加到选项中
+    if MELBAND_AVAILABLE:
+        SEPARATION_MODELS["melband_roformer"] = "MelBand RoFormer (高性能)"
+    
+    if SCNETXL_AVAILABLE:
+        SEPARATION_MODELS["scnetxl"] = "SCNet XL (高质量)"
     
     def __init__(self, use_gpu=False):
         """
@@ -99,17 +135,24 @@ class AudioAnalyzer(QtCore.QObject):
         self.grid_mapped_beats = []  # 映射到网格的节拍
         self.osu_params = {}  # osu谱面参数
         
-        # GPU加速设置
+        # GPU支持
         self.use_gpu = use_gpu and GPU_AVAILABLE
-        self.device = torch.device("cpu")  # 默认为CPU
+        self.device = torch.device("cuda" if self.use_gpu else "cpu")
         
-        # 人声分离相关
-        self.use_source_separation = False  # 是否使用人声分离
-        self.source_priority = self.DEFAULT_PRIORITY.copy()  # 音频源优先级
-        self.separated_sources = {}  # 保存分离后的音频源
-        self.active_source = None  # 当前活跃的音频源（用于分析）
+        # 人声分离
+        self.use_source_separation = False  # 是否使用源分离
         self.demucs_model = None  # Demucs模型
+        self.melband_model = None  # MelBand RoFormer模型
+        self.scnetxl_model = None  # SCNet XL模型
+        self.current_model = "htdemucs"  # 当前使用的模型名称
+        self.active_source = "original"  # 当前活跃的音频源
+        self.source_priority = self.DEFAULT_PRIORITY.copy()  # 源优先级
+        self.separated_sources = {}  # 分离后的音频源
         
+        # 线程控制
+        self._is_running = False  # 分析是否正在运行
+        
+        # 如果启用GPU，初始化GPU相关设置
         if self.use_gpu:
             self._init_gpu()
     
@@ -1065,18 +1108,74 @@ class AudioAnalyzer(QtCore.QObject):
     def _load_demucs_model(self) -> None:
         """加载Demucs模型用于音频源分离"""
         self.analysis_progress.emit(5)
-        # 使用htdemucs模型，它是Demucs v4的混合变体，效果较好
-        self.demucs_model = get_model("htdemucs")
+        # 使用选择的Demucs变体
+        self.demucs_model = get_model(self.current_model)
         if self.use_gpu and GPU_AVAILABLE:
             self.demucs_model.to(torch.device("cuda"))
         else:
             self.demucs_model.to(torch.device("cpu"))
     
-    def _separate_audio_sources(self) -> None:
-        """使用Demucs模型分离音频源"""
-        if self.demucs_model is None:
-            self._load_demucs_model()
+    def _load_melband_model(self) -> None:
+        """加载MelBand RoFormer模型用于高质量人声分离"""
+        if not MELBAND_AVAILABLE:
+            raise ImportError("MelBand RoFormer模型未安装，请使用pip install melband-roformer安装")
         
+        self.analysis_progress.emit(5)
+        # 加载预训练的MelBand RoFormer模型
+        self.melband_model = MelBandRoFormer.from_pretrained("melband/melband-roformer-base")
+        if self.use_gpu and GPU_AVAILABLE:
+            self.melband_model.to(torch.device("cuda"))
+        else:
+            self.melband_model.to(torch.device("cpu"))
+        
+        # 初始化音频处理器
+        self.melband_processor = AudioProcessor()
+    
+    def _load_scnetxl_model(self) -> None:
+        """加载SCNet XL模型用于更高质量的音频分离"""
+        if not SCNETXL_AVAILABLE:
+            raise ImportError("SCNet XL模型未安装，请使用pip install scnetxl安装")
+        
+        self.analysis_progress.emit(5)
+        # 加载预训练的SCNet XL模型
+        self.scnetxl_model = SCNetXL.from_pretrained("scnet/scnetxl-base")
+        if self.use_gpu and GPU_AVAILABLE:
+            self.scnetxl_model.to(torch.device("cuda"))
+        else:
+            self.scnetxl_model.to(torch.device("cpu"))
+    
+    def _separate_audio_sources(self) -> None:
+        """使用所选模型分离音频源"""
+        if self.current_model in ["demucs_v4", "htdemucs", "htdemucs_ft"]:
+            # 使用Demucs模型
+            if self.demucs_model is None:
+                self._load_demucs_model()
+            self._separate_with_demucs()
+        elif self.current_model == "melband_roformer":
+            # 使用MelBand RoFormer模型
+            if self.melband_model is None:
+                self._load_melband_model()
+            self._separate_with_melband()
+        elif self.current_model == "scnetxl":
+            # 使用SCNet XL模型
+            if self.scnetxl_model is None:
+                self._load_scnetxl_model()
+            self._separate_with_scnetxl()
+        else:
+            # 回退到默认Demucs模型
+            if self.demucs_model is None:
+                self.current_model = "htdemucs"
+                self._load_demucs_model()
+            self._separate_with_demucs()
+        
+        # 打印所有可用源用于调试
+        print(f"音频分离完成，使用模型: {self.current_model}")
+        print(f"可用音频源: {list(self.separated_sources.keys())}")
+        
+        self.analysis_progress.emit(15)
+    
+    def _separate_with_demucs(self) -> None:
+        """使用Demucs模型分离音频源"""
         self.analysis_progress.emit(8)
         
         # 转换为torch张量并重塑为Demucs期望的格式
@@ -1107,12 +1206,177 @@ class AudioAnalyzer(QtCore.QObject):
         
         # 从神经网络输出中提取各个源
         self.separated_sources = {}
-        for source_idx, source_name in enumerate(self.AUDIO_SOURCES):
-            # 转换为numpy数组并取平均值如果是立体声
-            source_np = sources[source_idx].mean(dim=0).cpu().numpy()
-            self.separated_sources[source_name] = source_np
         
-        self.analysis_progress.emit(15)
+        # 打印调试信息
+        print(f"Demucs模型输出源的顺序: {self.DEMUCS_SOURCE_ORDER}")
+        
+        # 将Demucs输出的源直接映射到对应的标准名称
+        # Demucs输出顺序为: [drums, bass, other, vocals]
+        for i, source_name in enumerate(self.DEMUCS_SOURCE_ORDER):
+            # 转换为numpy数组并取平均值如果是立体声
+            source_np = sources[i].mean(dim=0).cpu().numpy()
+            self.separated_sources[source_name] = source_np
+            print(f"处理源 {i}: {source_name}")
+        
+        # 打印全部可用的源
+        print(f"分离后的源: {list(self.separated_sources.keys())}")
+    
+    def _separate_with_melband(self) -> None:
+        """使用MelBand RoFormer模型分离音频源"""
+        self.analysis_progress.emit(8)
+        
+        # 确保音频采样率为16kHz (MelBand RoFormer的标准)
+        if self.sr != 16000:
+            y_resampled = librosa.resample(self.y, orig_sr=self.sr, target_sr=16000)
+        else:
+            y_resampled = self.y
+        
+        # 转换为torch张量
+        audio_tensor = torch.tensor(y_resampled).float()
+        if audio_tensor.dim() == 2:
+            # 如果是立体声，转换为单声道
+            audio_tensor = audio_tensor.mean(dim=0)
+        
+        # 移动到正确的设备
+        device = torch.device("cuda" if self.use_gpu and GPU_AVAILABLE else "cpu")
+        audio_tensor = audio_tensor.to(device)
+        
+        # 处理音频
+        with torch.no_grad():
+            # 准备输入
+            inputs = self.melband_processor(audio_tensor, sampling_rate=16000, return_tensors="pt")
+            inputs = {k: v.to(device) for k, v in inputs.items()}
+            
+            # 模型推理
+            outputs = self.melband_model(**inputs)
+            
+            # 获取分离结果
+            vocals = outputs.vocals.cpu().numpy().squeeze()
+            instruments = outputs.instruments.cpu().numpy().squeeze()
+        
+        # 如果原始采样率不是16kHz，重新采样回原始采样率
+        if self.sr != 16000:
+            vocals = librosa.resample(vocals, orig_sr=16000, target_sr=self.sr)
+            instruments = librosa.resample(instruments, orig_sr=16000, target_sr=self.sr)
+        
+        # 保存分离后的源
+        self.separated_sources = {}
+        
+        # MelBand模型输出对应关系
+        self.separated_sources["vocals"] = vocals        # 人声
+        self.separated_sources["other"] = instruments    # 其他乐器
+        
+        # 尝试进一步分离乐器（如果模型支持）
+        try:
+            drums = outputs.drums.cpu().numpy().squeeze()
+            bass = outputs.bass.cpu().numpy().squeeze()
+            
+            if self.sr != 16000:
+                drums = librosa.resample(drums, orig_sr=16000, target_sr=self.sr)
+                bass = librosa.resample(bass, orig_sr=16000, target_sr=self.sr)
+            
+            self.separated_sources["drums"] = drums    # 鼓声
+            self.separated_sources["bass"] = bass      # 贝斯
+        except (AttributeError, KeyError):
+            # 如果模型不支持进一步分离，使用近似方法
+            self._approximate_drums_bass(instruments)
+        
+        # 打印全部可用的源
+        print(f"MelBand分离后的源: {list(self.separated_sources.keys())}")
+    
+    def _approximate_drums_bass(self, instruments: np.ndarray) -> None:
+        """使用简单频率分离方法近似分离鼓声和贝斯"""
+        # 鼓声主要在中高频段
+        drums = librosa.effects.percussive(instruments, margin=3.0)
+        
+        # 贝斯主要在低频段
+        bass = librosa.effects.harmonic(instruments)
+        # 应用低通滤波器来获取贝斯
+        bass = librosa.decompose.nn_filter(
+            bass,
+            aggregate=np.median,
+            metric='cosine',
+            width=int(self.sr/30)  # 约33ms窗口
+        )
+        
+        # 添加近似分离的鼓声和贝斯
+        self.separated_sources["drums"] = drums    # 鼓声
+        self.separated_sources["bass"] = bass      # 贝斯
+    
+    def _separate_with_scnetxl(self) -> None:
+        """使用SCNet XL模型分离音频源"""
+        self.analysis_progress.emit(8)
+        
+        # SCNet XL使用44.1kHz采样率
+        if self.sr != 44100:
+            y_resampled = librosa.resample(self.y, orig_sr=self.sr, target_sr=44100)
+        else:
+            y_resampled = self.y
+        
+        # 确保音频是单声道
+        if len(y_resampled.shape) == 2:
+            y_mono = np.mean(y_resampled, axis=0)
+        else:
+            y_mono = y_resampled
+        
+        # 转换为torch张量
+        audio_tensor = torch.tensor(y_mono).float().unsqueeze(0)
+        
+        # 移动到正确的设备
+        device = torch.device("cuda" if self.use_gpu and GPU_AVAILABLE else "cpu")
+        audio_tensor = audio_tensor.to(device)
+        
+        # 应用模型
+        with torch.no_grad():
+            outputs = self.scnetxl_model(audio_tensor)
+        
+        # 从输出中提取各个源
+        self.separated_sources = {}
+        
+        # SCNet模型输出的标准名称
+        source_names = ["vocals", "drums", "bass", "other"]
+        
+        # 直接从模型输出映射到标准源名称
+        for source_name in source_names:
+            if source_name in outputs:
+                source_audio = outputs[source_name].cpu().numpy().squeeze()
+                
+                # 如果需要，重新采样回原始采样率
+                if self.sr != 44100:
+                    source_audio = librosa.resample(source_audio, orig_sr=44100, target_sr=self.sr)
+                
+                self.separated_sources[source_name] = source_audio
+        
+        # 打印全部可用的源
+        print(f"SCNet分离后的源: {list(self.separated_sources.keys())}")
+    
+    def set_separation_model(self, model_name: str) -> None:
+        """
+        设置使用的人声分离模型
+        
+        参数:
+            model_name: 模型名称，应该是SEPARATION_MODELS字典中的一个键
+        """
+        if model_name in self.SEPARATION_MODELS:
+            self.current_model = model_name
+            # 清除现有模型缓存
+            self.demucs_model = None
+            self.melband_model = None
+            self.scnetxl_model = None
+            # 清除已分离的源
+            self.separated_sources = {}
+            self.active_source = "original"
+        else:
+            raise ValueError(f"不支持的模型: {model_name}。支持的模型有: {list(self.SEPARATION_MODELS.keys())}")
+    
+    def get_available_models(self) -> Dict[str, str]:
+        """
+        获取所有可用的人声分离模型
+        
+        返回:
+            Dict[str, str]: 模型ID到模型名称的映射
+        """
+        return self.SEPARATION_MODELS.copy()
     
     def _select_active_source(self) -> None:
         """根据优先级选择活跃音频源"""
@@ -1194,11 +1458,46 @@ class AudioAnalyzer(QtCore.QObject):
         # 获取原始文件名（不带扩展名）
         basename = os.path.splitext(os.path.basename(self.file_path))[0]
         
-        # 导出每个源
+        # 音频源类型的人类可读名称
+        source_display_names = {
+            "vocals": "人声(vocals)",
+            "drums": "鼓声(drums)",
+            "bass": "贝斯(bass)",
+            "other": "其他乐器(other)"
+        }
+        
+        # 打印调试信息
+        print("导出分离音频文件:")
+        for source_name in self.separated_sources.keys():
+            print(f"  - {source_name}: {source_display_names.get(source_name, source_name)}")
+        
+        # 导出每个源，使用更清晰的文件名
         result = {}
+        
+        # 建立源类型与真实内容的映射 - 这是临时映射，仅用于调试目的
+        actual_content_map = {
+            "vocals": "人声内容",
+            "drums": "鼓声内容",
+            "bass": "贝斯内容", 
+            "other": "其他乐器内容"
+        }
+        
+        # 导出每个源并在结果字典中使用正确的显示名称作为键
         for source_name, source_data in self.separated_sources.items():
-            output_path = os.path.join(output_dir, f"{basename}_{source_name}.wav")
+            # 获取更具描述性的名称
+            display_name = source_display_names.get(source_name, source_name)
+            
+            # 创建包含源类型的文件名
+            output_filename = f"{basename}_{display_name}.wav"
+            output_path = os.path.join(output_dir, output_filename)
+            
+            # 写入音频文件
             sf.write(output_path, source_data, self.sr)
+            
+            # 在结果字典中使用实际内容名作为键 - 这确保UI中显示的是正确的内容描述
             result[source_name] = output_path
+            
+            # 打印详细的导出信息用于调试
+            print(f"导出 {source_name} 到 {output_filename} (实际内容: {actual_content_map.get(source_name, '未知')})")
             
         return result 

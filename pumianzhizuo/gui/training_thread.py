@@ -706,7 +706,10 @@ class TrainingThread(QThread):
             train_loss: 训练损失
             val_loss: 验证损失
         """
-        self.epoch_completed.emit(epoch, train_loss, val_loss)
+        # 确保 val_loss 不为 None，如果为 None 则使用 0.0 代替
+        safe_val_loss = 0.0 if val_loss is None else val_loss
+        
+        self.epoch_completed.emit(epoch, train_loss, safe_val_loss)
         
         # 更新绘图
         self._update_plot()

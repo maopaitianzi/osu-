@@ -173,7 +173,7 @@ class AudioVisualizer(QtWidgets.QWidget):
         if "original" in self.available_sources:
             self.source_selector.addItem("原始音频 (Original)", "original")
             
-        # 添加分离的音频源选项
+        # 添加分离的音频源选项，使用正确的音频源映射
         source_display_names = {
             "vocals": "人声 (Vocals)",
             "drums": "鼓声 (Drums)",
@@ -191,18 +191,33 @@ class AudioVisualizer(QtWidgets.QWidget):
             self.source_selector.setCurrentIndex(index)
         else:
             # 如果找不到之前的音频源，默认选择第一个
-            self.current_source = self.source_selector.itemData(0)
+            if self.source_selector.count() > 0:
+                self.current_source = self.source_selector.itemData(0)
+    
+    def set_active_source(self, source: str):
+        """设置当前活跃的音频源"""
+        if source != self.current_source:
+            self.current_source = source
+            
+            # 更新选择器
+            index = self.source_selector.findData(source)
+            if index >= 0:
+                self.source_selector.setCurrentIndex(index)
+            
+            # 更新可视化
+            self.update_visualization()
+            self.update_info_panel()
+            
+            # 发送信号
+            self.source_changed.emit(source)
     
     def _on_source_changed(self, index: int):
         """当音频源选择改变时触发"""
         if index >= 0:
             source = self.source_selector.itemData(index)
             if source and source != self.current_source:
-                self.current_source = source
-                self.source_changed.emit(source)
-                self.update_visualization()
-                self.update_info_panel()
-    
+                self.set_active_source(source)
+                
     def update_info_panel(self):
         """更新信息面板"""
         if not self.features:
@@ -214,6 +229,7 @@ class AudioVisualizer(QtWidgets.QWidget):
         
         # 显示当前活跃音频源
         if "active_source" in self.features:
+            # 使用正确的音频源映射显示名称
             source_display = {
                 "original": "原始音频",
                 "vocals": "人声",
@@ -281,7 +297,7 @@ class AudioVisualizer(QtWidgets.QWidget):
     
     def _get_current_audio_data(self):
         """获取当前选中的音频源数据"""
-        if self.current_source == "original" or not hasattr(self, 'separated_sources'):
+        if self.current_source == "original" or not hasattr(self, 'separated_sources') or not self.separated_sources:
             return self.y
             
         # 如果分离后的音频源可用，使用它

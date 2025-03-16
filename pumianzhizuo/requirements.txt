@@ -12,6 +12,12 @@ numba==0.61.0
 audioread==3.0.1
 ffmpeg-python==0.2.0
 demucs==4.0.1
+sounddevice==0.5.0  # 用于音频回放测试
+
+# 高级音频分离模型（可选）
+# 取消注释以下行以安装高级分离模型
+# melband-roformer==0.6.0  # MelBand RoFormer模型
+# scnetxl==0.4.0  # SCNet XL高质量音频分离
 
 # 数据处理与科学计算
 numpy==1.24.3
@@ -34,3 +40,16 @@ joblib==1.4.2
 # 如果需要使用GPU加速，确保已安装支持CUDA的PyTorch版本
 # 可通过以下命令安装:
 # pip install torch torchaudio torchvision --index-url https://download.pytorch.org/whl/cu121 
+
+# 高级音频分离模型安装说明
+# 1. 安装Demucs（默认已包含）:
+#    pip install demucs
+#
+# 2. 安装MelBand RoFormer（可选，更高质量的人声分离）:
+#    pip install melband-roformer
+#
+# 3. 安装SCNet XL（可选，最高质量的音频分离）:
+#    pip install scnetxl
+#
+# 注意：高级模型首次使用时会自动下载预训练权重（约1-2GB），
+# 请确保网络连接良好并有足够的磁盘空间。 

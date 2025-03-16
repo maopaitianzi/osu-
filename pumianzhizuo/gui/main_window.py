@@ -1057,9 +1057,64 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
         # 设置设置选项卡内容
         settings_layout = QtWidgets.QVBoxLayout(settings_tab)
         
+        # 设置分组框标题样式
+        group_box_style = """
+        QGroupBox {
+            font-weight: bold;
+            font-size: 13px;
+            border: 1px solid #aaa;
+            border-radius: 4px;
+            margin-top: 12px;
+            padding-top: 8px;
+        }
+        QGroupBox::title {
+            subcontrol-origin: margin;
+            subcontrol-position: top left;
+            left: 10px;
+            padding: 0 5px;
+            background-color: #f8f8f8;
+        }
+        """
+        
+        # 创建滚动区域和内容容器
+        settings_scroll_area = QtWidgets.QScrollArea()
+        settings_scroll_area.setWidgetResizable(True)
+        settings_scroll_area.setFrameShape(QtWidgets.QFrame.NoFrame)
+        settings_scroll_area.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
+        settings_scroll_area.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarAsNeeded)
+        settings_scroll_area.setToolTip("滚动查看更多设置选项")
+        
+        # 设置滚动条样式
+        scroll_bar_style = """
+        QScrollBar:vertical {
+            background: #f0f0f0;
+            width: 10px;
+            margin: 0px;
+        }
+        QScrollBar::handle:vertical {
+            background: #b0b0b0;
+            min-height: 20px;
+            border-radius: 5px;
+        }
+        QScrollBar::handle:vertical:hover {
+            background: #909090;
+        }
+        QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+            height: 0px;
+        }
+        """
+        settings_scroll_area.setStyleSheet(scroll_bar_style)
+        
+        settings_scroll_content = QtWidgets.QWidget()
+        settings_scroll_layout = QtWidgets.QVBoxLayout(settings_scroll_content)
+        settings_scroll_layout.setContentsMargins(0, 0, 0, 0)
+        settings_scroll_layout.setSpacing(10)  # 设置各组之间的间距
+        
         # 模型设置
         model_group = QtWidgets.QGroupBox("模型设置")
+        model_group.setStyleSheet(group_box_style)
         model_layout = QtWidgets.QFormLayout(model_group)
+        model_layout.setContentsMargins(10, 15, 10, 10)  # 调整内边距
         
         self.model_combo = QtWidgets.QComboBox()
         self.model_combo.addItems(["默认模型", "流行风格", "古典风格", "电子风格"])
@@ -1068,7 +1123,9 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
         
         # 输出设置
         output_group = QtWidgets.QGroupBox("输出设置")
+        output_group.setStyleSheet(group_box_style)
         output_layout = QtWidgets.QFormLayout(output_group)
+        output_layout.setContentsMargins(10, 15, 10, 10)  # 调整内边距
         
         self.output_path = QtWidgets.QLineEdit()
         self.output_path.setPlaceholderText("默认：与音频文件相同目录")
@@ -1085,7 +1142,9 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
         
         # 添加导出选项
         export_options_group = QtWidgets.QGroupBox("导出选项")
+        export_options_group.setStyleSheet(group_box_style)
         export_options_layout = QtWidgets.QVBoxLayout(export_options_group)
+        export_options_layout.setContentsMargins(10, 15, 10, 10)  # 调整内边距
         
         # 创建JSON格式选项
         json_format_layout = QtWidgets.QHBoxLayout()
@@ -1144,14 +1203,16 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
         export_options_layout.addLayout(export_content_layout)
         export_options_layout.addLayout(auto_export_layout)
         
-        # 添加设置组到设置布局
-        settings_layout.addWidget(model_group)
-        settings_layout.addWidget(output_group)
-        settings_layout.addWidget(export_options_group)
+        # 添加设置组到滚动区域布局
+        settings_scroll_layout.addWidget(model_group)
+        settings_scroll_layout.addWidget(output_group)
+        settings_scroll_layout.addWidget(export_options_group)
         
         # 添加可视化设置组
         visualization_group = QtWidgets.QGroupBox("可视化设置")
+        visualization_group.setStyleSheet(group_box_style)
         visualization_layout = QtWidgets.QVBoxLayout(visualization_group)
+        visualization_layout.setContentsMargins(10, 15, 10, 10)  # 调整内边距
         
         # 显示启用可视化的复选框
         self.enable_visualization_cb = QtWidgets.QCheckBox("启用音频可视化 (可能影响性能)")
@@ -1181,37 +1242,104 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
         
         # 添加音频源分离设置
         audio_separation_group = QtWidgets.QGroupBox("人声分离设置")
+        audio_separation_group.setStyleSheet(group_box_style)
         audio_separation_layout = QtWidgets.QVBoxLayout(audio_separation_group)
+        audio_separation_layout.setContentsMargins(10, 15, 10, 10)  # 调整内边距
         
         # 启用人声分离复选框
         self.enable_source_separation_cb = QtWidgets.QCheckBox("启用人声分离 (可能显著增加处理时间)")
         self.enable_source_separation_cb.setChecked(False)
         audio_separation_layout.addWidget(self.enable_source_separation_cb)
         
+        # 添加模型选择布局
+        model_layout = QtWidgets.QHBoxLayout()
+        model_label = QtWidgets.QLabel("分离模型:")
+        self.model_combo = QtWidgets.QComboBox()
+        # 模型选项将在初始化时动态填充
+        model_layout.addWidget(model_label)
+        model_layout.addWidget(self.model_combo)
+        audio_separation_layout.addLayout(model_layout)
+        
+        # 添加测试源映射的按钮
+        test_mapping_btn = QtWidgets.QPushButton("测试音频源内容")
+        test_mapping_btn.setToolTip("播放每个分离的音频源3秒钟，以确认标签和内容是否匹配")
+        test_mapping_btn.clicked.connect(self.test_audio_sources)
+        audio_separation_layout.addWidget(test_mapping_btn)
+        
         # 添加优先级选择布局
-        priority_layout = QtWidgets.QHBoxLayout()
-        priority_label = QtWidgets.QLabel("音频源优先级:")
-        self.priority_combo = QtWidgets.QComboBox()
-        self.priority_combo.addItems([
-            "人声优先 (Vocals > Drums > Bass > Other)",
-            "鼓声优先 (Drums > Vocals > Bass > Other)",
-            "贝斯优先 (Bass > Drums > Vocals > Other)",
-            "钢琴/其他优先 (Other > Vocals > Drums > Bass)"
-        ])
+        priority_group = QtWidgets.QGroupBox("音频源优先级")
+        priority_group.setStyleSheet(group_box_style)
+        priority_layout = QtWidgets.QVBoxLayout(priority_group)
+        priority_layout.setContentsMargins(10, 15, 10, 10)  # 调整内边距
+        
+        # 添加说明标签
+        priority_label = QtWidgets.QLabel("拖拽调整音频源优先级顺序（顶部最高优先级）:")
         priority_layout.addWidget(priority_label)
-        priority_layout.addWidget(self.priority_combo)
-        audio_separation_layout.addLayout(priority_layout)
+        
+        # 创建列表控件用于拖拽排序
+        self.priority_list = QtWidgets.QListWidget()
+        self.priority_list.setDragDropMode(QtWidgets.QAbstractItemView.InternalMove)
+        self.priority_list.setSelectionMode(QtWidgets.QAbstractItemView.SingleSelection)
+        self.priority_list.setMaximumHeight(120)
+        self.priority_list.setMinimumHeight(80)  # 设置最小高度，确保所有项目可见
+        self.priority_list.setSizePolicy(QtWidgets.QSizePolicy.Expanding, QtWidgets.QSizePolicy.Fixed)  # 水平扩展，垂直固定
+        self.priority_list.setAlternatingRowColors(True)  # 交替行颜色，提高可读性
+        self.priority_list.setStyleSheet("QListWidget::item { padding: 5px; border-bottom: 1px solid #444; }")
+        # 添加工具提示
+        self.priority_list.setToolTip("拖拽列表项以调整音频源的优先级顺序\n顶部的音频源将被优先用于分析")
+        
+        # 自定义图标指示优先级
+        priority_icons = {
+            "vocals": "gui/resources/vocal_icon.png",
+            "drums": "gui/resources/drum_icon.png",
+            "bass": "gui/resources/bass_icon.png",
+            "other": "gui/resources/other_icon.png"
+        }
+        
+        # 添加默认的音频源选项 - 显示名称与实际内容一致
+        source_display_names = {
+            "vocals": "人声 (Vocals)",
+            "drums": "鼓声 (Drums)",
+            "bass": "贝斯 (Bass)",
+            "other": "其他乐器 (Other)"
+        }
+        
+        for source_id, display_name in source_display_names.items():
+            item = QtWidgets.QListWidgetItem(display_name)
+            item.setData(QtCore.Qt.UserRole, source_id)
+            # 尝试设置图标，如果图标文件不存在则忽略
+            icon_path = priority_icons.get(source_id)
+            if icon_path and os.path.exists(icon_path):
+                item.setIcon(QtGui.QIcon(icon_path))
+            self.priority_list.addItem(item)
+        
+        # 连接排序变化的信号
+        self.priority_list.model().rowsMoved.connect(self.on_priority_changed)
+        
+        priority_layout.addWidget(self.priority_list)
+        
+        # 添加按钮用于重置排序
+        reset_priority_btn = QtWidgets.QPushButton("重置默认顺序")
+        reset_priority_btn.clicked.connect(self.reset_source_priority)
+        priority_layout.addWidget(reset_priority_btn)
+        
+        audio_separation_layout.addWidget(priority_group)
         
         # 添加导出分离音频选项
         self.export_separated_audio_cb = QtWidgets.QCheckBox("分析后导出分离的音频")
         self.export_separated_audio_cb.setChecked(False)
         audio_separation_layout.addWidget(self.export_separated_audio_cb)
         
-        # 添加设置组到设置布局
-        settings_layout.addWidget(audio_separation_group)
-        settings_layout.addWidget(visualization_group)
+        # 添加设置组到滚动区域布局
+        settings_scroll_layout.addWidget(audio_separation_group)
+        settings_scroll_layout.addWidget(visualization_group)
         
-        settings_layout.addStretch()
+        settings_scroll_layout.addStretch()
+        
+        # 设置滚动区域的内容并添加到主布局
+        settings_scroll_area.setWidget(settings_scroll_content)
+        settings_layout.addWidget(settings_scroll_area)
+        
         # 创建状态栏
         self.statusBar = QtWidgets.QStatusBar()
         self.setStatusBar(self.statusBar)
@@ -1257,17 +1385,27 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
         if hasattr(self, 'enable_source_separation_cb'):
             self.audio_analyzer.set_use_source_separation(self.enable_source_separation_cb.isChecked())
             
-            # 设置音频源优先级
-            if self.enable_source_separation_cb.isChecked():
-                priority_index = self.priority_combo.currentIndex()
-                if priority_index == 0:  # 人声优先
-                    self.audio_analyzer.set_source_priority(["vocals", "drums", "bass", "other"])
-                elif priority_index == 1:  # 鼓声优先
-                    self.audio_analyzer.set_source_priority(["drums", "vocals", "bass", "other"])
-                elif priority_index == 2:  # 贝斯优先
-                    self.audio_analyzer.set_source_priority(["bass", "drums", "vocals", "other"])
-                elif priority_index == 3:  # 钢琴/其他优先
-                    self.audio_analyzer.set_source_priority(["other", "vocals", "drums", "bass"])
+            # 设置分离模型（如果选择了）
+            if hasattr(self, 'model_combo') and self.enable_source_separation_cb.isChecked():
+                model_key = self.model_combo.currentData()
+                if model_key:
+                    try:
+                        self.audio_analyzer.set_separation_model(model_key)
+                    except Exception as e:
+                        QtWidgets.QMessageBox.warning(self, "模型加载错误", f"无法加载所选模型: {str(e)}")
+            
+            # 设置音频源优先级 - 使用用户自定义的顺序
+            if self.enable_source_separation_cb.isChecked() and hasattr(self, 'priority_list'):
+                # 从列表中获取用户排序的优先级
+                priority_sources = []
+                for i in range(self.priority_list.count()):
+                    item = self.priority_list.item(i)
+                    source_id = item.data(QtCore.Qt.UserRole)
+                    priority_sources.append(source_id)
+                
+                # 设置自定义优先级
+                if priority_sources:
+                    self.audio_analyzer.set_source_priority(priority_sources)
         
         # 加载音频文件
         success = self.audio_analyzer.load_audio(audio_path)
@@ -1364,11 +1502,28 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
             exported_files = self.audio_analyzer.export_separated_audio(output_dir)
             
             if exported_files:
-                # 显示导出成功信息
-                export_paths = "\n".join([f"{k}: {os.path.basename(v)}" for k, v in exported_files.items()])
+                # 源类型的人类可读描述
+                source_descriptions = {
+                    "vocals": "人声 (Vocals)",
+                    "drums": "鼓声 (Drums)",
+                    "bass": "贝斯 (Bass)",
+                    "other": "其他乐器 (Other)"
+                }
+                
+                # 显示导出成功信息，使用更友好的描述
+                export_paths = []
+                for k, v in exported_files.items():
+                    # 使用更友好的描述而不是代码中的键名
+                    source_desc = source_descriptions.get(k, k)
+                    filename = os.path.basename(v)
+                    export_paths.append(f"{source_desc}: {filename}")
+                
+                # 拼接成文本
+                export_info = "\n".join(export_paths)
+                
                 QtWidgets.QMessageBox.information(
                     self, "导出成功", 
-                    f"分离的音频已导出到:\n{output_dir}\n\n{export_paths}"
+                    f"分离的音频已导出到:\n{output_dir}\n\n{export_info}"
                 )
         
         # 仅当可视化功能启用时才更新可视化器
@@ -3322,6 +3477,198 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
             self.analyze_audio()
         else:
             QtWidgets.QMessageBox.warning(self, "导入失败", "无法从谱面文件导入BPM")
+
+    def showEvent(self, event):
+        """窗口显示时的处理"""
+        super().showEvent(event)
+        
+        # 填充模型选择下拉菜单
+        if hasattr(self, 'model_combo') and hasattr(self, 'audio_analyzer'):
+            # 清空现有选项
+            self.model_combo.clear()
+            
+            # 获取可用模型
+            try:
+                available_models = self.audio_analyzer.get_available_models()
+                for model_id, model_name in available_models.items():
+                    self.model_combo.addItem(model_name, model_id)
+                
+                # 默认选择htdemucs模型
+                default_index = self.model_combo.findData("htdemucs")
+                if default_index >= 0:
+                    self.model_combo.setCurrentIndex(default_index)
+            except:
+                # 如果还没初始化完成，添加默认选项
+                self.model_combo.addItem("Demucs HT（混合变体）", "htdemucs")
+
+    def reset_source_priority(self):
+        """重置音频源优先级为默认顺序"""
+        if hasattr(self, 'priority_list'):
+            # 清空列表
+            self.priority_list.clear()
+            
+            # 默认优先级顺序
+            default_sources = [
+                ("vocals", "人声 (Vocals)"),
+                ("drums", "鼓声 (Drums)"),
+                ("bass", "贝斯 (Bass)"),
+                ("other", "其他乐器 (Other)")
+            ]
+            
+            # 重新添加项目
+            for source_id, display_name in default_sources:
+                item = QtWidgets.QListWidgetItem(display_name)
+                item.setData(QtCore.Qt.UserRole, source_id)
+                # 尝试设置图标，如果图标文件不存在则忽略
+                icon_path = self.get_source_icon_path(source_id)
+                if icon_path and os.path.exists(icon_path):
+                    item.setIcon(QtGui.QIcon(icon_path))
+                self.priority_list.addItem(item)
+            
+            # 触发优先级变更事件
+            self.on_priority_changed()
+
+    def get_source_icon_path(self, source_id):
+        """获取音频源的图标路径"""
+        icons = {
+            "vocals": "gui/resources/vocal_icon.png",
+            "drums": "gui/resources/drum_icon.png",
+            "bass": "gui/resources/bass_icon.png",
+            "other": "gui/resources/other_icon.png"
+        }
+        return icons.get(source_id)
+
+    def on_priority_changed(self):
+        """当优先级顺序改变时触发"""
+        # 记录当前优先级顺序
+        current_priority = []
+        for i in range(self.priority_list.count()):
+            item = self.priority_list.item(i)
+            source_id = item.data(QtCore.Qt.UserRole)
+            current_priority.append(source_id)
+        
+        # 如果分析器已存在，立即更新优先级
+        if hasattr(self, 'audio_analyzer') and self.audio_analyzer:
+            self.audio_analyzer.set_source_priority(current_priority)
+            
+            # 如果已经完成分离，重新选择活跃源
+            if hasattr(self.audio_analyzer, 'separated_sources') and self.audio_analyzer.separated_sources:
+                self.audio_analyzer._select_active_source()
+                
+                # 如果可视化器存在，更新显示
+                if hasattr(self, 'audio_visualizer') and self.audio_visualizer:
+                    self.audio_visualizer.set_active_source(self.audio_analyzer.active_source)
+                    self.audio_visualizer.update_visualization()
+        
+        # 更新状态栏以提示用户
+        self.statusBar.showMessage(f"已更新音频源优先级: {' > '.join(current_priority)}", 3000)
+
+    def test_audio_sources(self):
+        """测试分离的音频源标签与内容是否匹配"""
+        # 检查是否已分离音频
+        if not hasattr(self, 'audio_analyzer') or not hasattr(self.audio_analyzer, 'separated_sources') or not self.audio_analyzer.separated_sources:
+            QtWidgets.QMessageBox.warning(self, "未分离音频", "请先启用人声分离并分析音频，然后再测试音频源")
+            return
+        
+        # 设置播放工具
+        try:
+            import sounddevice as sd
+            import time
+        except ImportError:
+            QtWidgets.QMessageBox.warning(self, "缺少依赖", "需要安装sounddevice库才能测试音频。请运行 'pip install sounddevice'")
+            return
+        
+        # 获取分离的音频源
+        sources = self.audio_analyzer.separated_sources
+        sr = self.audio_analyzer.sr
+        play_duration = 3  # 秒
+        
+        # 音频源显示名称
+        source_display_names = {
+            "vocals": "人声(vocals)",
+            "drums": "鼓声(drums)",
+            "bass": "贝斯(bass)",
+            "other": "其他乐器(other)"
+        }
+        
+        # 创建播放队列
+        play_queue = []
+        for source_name, audio_data in sources.items():
+            display_name = source_display_names.get(source_name, source_name)
+            play_queue.append((source_name, display_name, audio_data))
+        
+        # 创建进度对话框
+        progress = QtWidgets.QProgressDialog("测试音频源中...", "取消", 0, len(play_queue), self)
+        progress.setWindowTitle("音频源测试")
+        progress.setWindowModality(QtCore.Qt.WindowModal)
+        progress.setMinimumDuration(0)
+        
+        # 播放每个源的一部分
+        for i, (source_name, display_name, audio_data) in enumerate(play_queue):
+            # 更新进度对话框
+            progress.setValue(i)
+            progress.setLabelText(f"正在播放: {display_name}\n请聆听此音频是否与标签相符")
+            
+            # 处理取消
+            if progress.wasCanceled():
+                break
+            
+            # 计算要播放的样本数
+            samples = min(int(play_duration * sr), len(audio_data))
+            
+            # 找到最大音量段落
+            if len(audio_data) > sr * 10:  # 如果音频长度超过10秒
+                # 将音频分成10段，找到能量最大的段落
+                segment_length = len(audio_data) // 10
+                max_energy = 0
+                start_idx = 0
+                
+                for j in range(10):
+                    segment = audio_data[j * segment_length:(j+1) * segment_length]
+                    energy = np.sum(segment**2)
+                    if energy > max_energy:
+                        max_energy = energy
+                        start_idx = j * segment_length
+                
+                # 确保不会越界
+                if start_idx + samples > len(audio_data):
+                    start_idx = len(audio_data) - samples
+                
+                # 提取最响亮的片段
+                audio_segment = audio_data[start_idx:start_idx + samples]
+            else:
+                # 音频较短，直接从头播放
+                audio_segment = audio_data[:samples]
+            
+            # 检查音频是否是静音
+            if np.max(np.abs(audio_segment)) < 0.01:
+                QtWidgets.QMessageBox.warning(
+                    self, 
+                    "音频太安静", 
+                    f"警告: {display_name} 源的音频音量极小，可能是静音或分离有问题"
+                )
+                continue
+            
+            # 标准化音频音量
+            audio_segment = audio_segment / np.max(np.abs(audio_segment)) * 0.8
+            
+            # 播放音频
+            sd.play(audio_segment, sr)
+            
+            # 等待播放完成
+            time.sleep(play_duration)
+            sd.stop()
+            
+            # 短暂停顿，分隔不同源的播放
+            time.sleep(0.5)
+        
+        # 完成播放
+        progress.setValue(len(play_queue))
+        QtWidgets.QMessageBox.information(
+            self, 
+            "测试完成", 
+            "所有音频源已播放完毕。如果发现标签与内容不匹配，请在GitHub报告此问题。"
+        )
 
 def main():
     """程序入口函数"""
