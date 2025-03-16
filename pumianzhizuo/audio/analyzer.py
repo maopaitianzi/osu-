@@ -54,6 +54,10 @@ class AudioAnalyzer(QtCore.QObject):
         self.tempo = None
         self.beats = None
         
+        # BPM设置相关
+        self.manual_bpm = None  # 手动设置的BPM
+        self.bpm_source = "auto"  # BPM来源：auto, manual, beatmap
+        
         # GPU设置
         self.use_gpu = use_gpu and GPU_AVAILABLE
         if self.use_gpu:
@@ -167,68 +171,108 @@ class AudioAnalyzer(QtCore.QObject):
     
     def _detect_tempo_and_beats(self) -> None:
         """检测BPM和节拍位置"""
-        # 计算onset强度包络
-        self.onset_envelope = librosa.onset.onset_strength(
-            y=self.y, sr=self.sr, hop_length=self.hop_length
-        )
-        
-        # 如果启用GPU，使用GPU加速
-        if self.use_gpu:
-            # 将onset_envelope转移到GPU
-            onset_env_gpu = self._to_gpu(self.onset_envelope)
+        # 如果有手动设置的BPM，优先使用
+        if self.manual_bpm is not None and self.bpm_source != "auto":
+            self.tempo = self.manual_bpm
             
-            # 使用GPU进行FFT计算
-            # 注意：实际实现需要替换为torch的实现
-            # 这里简化为CPU计算后再转回GPU
-            # TODO: 使用torch替换librosa的实现
-            
-            # 暂时回到CPU执行，因为librosa不直接支持GPU
-            onset_env_cpu = self._to_cpu(onset_env_gpu)
-            tempo, beats = librosa.beat.beat_track(
-                onset_envelope=onset_env_cpu, 
-                sr=self.sr,
-                hop_length=self.hop_length,
-                trim=False
+            # 计算onset强度包络
+            self.onset_envelope = librosa.onset.onset_strength(
+                y=self.y, sr=self.sr, hop_length=self.hop_length
             )
             
-            # 将节拍回到GPU
-            beats_gpu = self._to_gpu(beats)
-            # 然后再转回CPU存储结果
-            beats = self._to_cpu(beats_gpu)
+            # 使用手动BPM进行节拍检测
+            ac = librosa.autocorrelate(self.onset_envelope, max_size=2 * self.sr // self.hop_length)
+            tempo = float(self.manual_bpm)
+            
+            # 计算每个节拍的帧数
+            frames_per_beat = int(60.0 * self.sr / (tempo * self.hop_length))
+            
+            # 使用动态规划寻找最佳的节拍位置
+            beats = librosa.util.peak_pick(self.onset_envelope, 
+                                          pre_max=frames_per_beat // 2, 
+                                          post_max=frames_per_beat // 2, 
+                                          pre_avg=frames_per_beat, 
+                                          post_avg=frames_per_beat, 
+                                          delta=0.2, 
+                                          wait=frames_per_beat // 2)
+            
+            # 如果没有检测到足够的节拍，使用等间隔的节拍
+            if len(beats) < 4:
+                # 估计第一个节拍的位置
+                start_frame = np.argmax(self.onset_envelope[:frames_per_beat*2])
+                
+                # 生成均匀的节拍序列
+                num_beats = int(len(self.onset_envelope) / frames_per_beat)
+                beats = np.arange(start_frame, start_frame + num_beats * frames_per_beat, frames_per_beat)
+                
+                # 限制在有效范围内
+                beats = beats[beats < len(self.onset_envelope)]
         else:
-            # 使用CPU执行原始算法
-            tempo, beats = librosa.beat.beat_track(
-                onset_envelope=self.onset_envelope, 
+            # 计算onset强度包络
+            self.onset_envelope = librosa.onset.onset_strength(
+                y=self.y, sr=self.sr, hop_length=self.hop_length
+            )
+            
+            # 如果启用GPU，使用GPU加速
+            if self.use_gpu:
+                # 将onset_envelope转移到GPU
+                onset_env_gpu = self._to_gpu(self.onset_envelope)
+                
+                # 使用GPU进行FFT计算
+                # 注意：实际实现需要替换为torch的实现
+                # 这里简化为CPU计算后再转回GPU
+                # TODO: 使用torch替换librosa的实现
+                
+                # 暂时回到CPU执行，因为librosa不直接支持GPU
+                onset_env_cpu = self._to_cpu(onset_env_gpu)
+                tempo, beats = librosa.beat.beat_track(
+                    onset_envelope=onset_env_cpu, 
+                    sr=self.sr,
+                    hop_length=self.hop_length,
+                    trim=False
+                )
+                
+                # 将节拍回到GPU
+                beats_gpu = self._to_gpu(beats)
+                # 然后再转回CPU存储结果
+                beats = self._to_cpu(beats_gpu)
+            else:
+                # 使用CPU执行原始算法
+                tempo, beats = librosa.beat.beat_track(
+                    onset_envelope=self.onset_envelope, 
+                    sr=self.sr,
+                    hop_length=self.hop_length,
+                    trim=False
+                )
+            
+            # 算法2: 使用有调谐范围的节拍跟踪
+            tempo_range = librosa.beat.tempo(
+                onset_envelope=self.onset_envelope,
                 sr=self.sr,
                 hop_length=self.hop_length,
-                trim=False
+                aggregate=None
             )
-        
-        # 算法2: 使用有调谐范围的节拍跟踪
-        tempo_range = librosa.beat.tempo(
-            onset_envelope=self.onset_envelope,
-            sr=self.sr,
-            hop_length=self.hop_length,
-            aggregate=None
-        )
-        
-        # 如果检测到多个tempo候选，取最明显的
-        if len(tempo_range) > 0:
-            # 将tempo四舍五入到整数
-            tempo_candidates = [int(round(t)) for t in tempo_range]
             
-            # 尝试找出更可能的BPM（通常在60-180范围内）
-            filtered_tempi = [t for t in tempo_candidates if 60 <= t <= 240]
-            
-            if filtered_tempi:
-                # 取最常见的值作为可能的BPM
-                from collections import Counter
-                tempo_counts = Counter(filtered_tempi)
-                self.tempo = tempo_counts.most_common(1)[0][0]
+            # 如果检测到多个tempo候选，取最明显的
+            if len(tempo_range) > 0:
+                # 将tempo四舍五入到整数
+                tempo_candidates = [int(round(t)) for t in tempo_range]
+                
+                # 尝试找出更可能的BPM（通常在60-180范围内）
+                filtered_tempi = [t for t in tempo_candidates if 60 <= t <= 240]
+                
+                if filtered_tempi:
+                    # 取最常见的值作为可能的BPM
+                    from collections import Counter
+                    tempo_counts = Counter(filtered_tempi)
+                    self.tempo = tempo_counts.most_common(1)[0][0]
+                else:
+                    self.tempo = int(round(tempo))
             else:
                 self.tempo = int(round(tempo))
-        else:
-            self.tempo = int(round(tempo))
+            
+            # 更新BPM来源
+            self.bpm_source = "auto"
         
         # 将节拍时间转换为秒
         self.beats = librosa.frames_to_time(beats, sr=self.sr, hop_length=self.hop_length)
@@ -236,6 +280,17 @@ class AudioAnalyzer(QtCore.QObject):
         # 存储结果
         self.features["bpm"] = self.tempo
         self.features["beat_times"] = self.beats.tolist()
+        
+        # 如果是手动设置的BPM，也保存原始的自动检测结果
+        if self.bpm_source != "auto" and "original" not in self.features:
+            # 存储原始自动检测的信息
+            self.features["original"] = {
+                "bpm_source": "auto",
+                "beat_times": self.beats.tolist()
+            }
+            
+        # 保存BPM来源
+        self.features["bpm_source"] = self.bpm_source
         
         # 高级分析：检测节奏规律性
         if len(self.beats) > 1:
@@ -539,6 +594,100 @@ class AudioAnalyzer(QtCore.QObject):
         if "bpm" in self.features:
             return self.features["bpm"]
         return 0.0
+    
+    def get_bpm_source(self) -> str:
+        """获取BPM的来源"""
+        return self.bpm_source
+    
+    def set_manual_bpm(self, bpm: float) -> None:
+        """
+        手动设置BPM值
+        
+        参数:
+            bpm: 手动设置的BPM值
+        """
+        try:
+            bpm_value = float(bpm)
+            if bpm_value <= 0:
+                self.analysis_error.emit("BPM必须大于0")
+                return
+                
+            self.manual_bpm = bpm_value
+            self.bpm_source = "manual"
+            
+            # 更新features字典中的BPM
+            if self.features:
+                self.features["bpm"] = bpm_value
+                self.features["bpm_source"] = "manual"
+                
+            return True
+        except (ValueError, TypeError):
+            self.analysis_error.emit(f"无效的BPM值: {bpm}")
+            return False
+            
+    def import_beatmap_bpm(self, beatmap_path: str) -> bool:
+        """
+        从osu谱面文件导入BPM
+        
+        参数:
+            beatmap_path: osu谱面文件的路径
+            
+        返回:
+            导入是否成功
+        """
+        try:
+            if not os.path.exists(beatmap_path):
+                self.analysis_error.emit(f"谱面文件不存在: {beatmap_path}")
+                return False
+                
+            # 读取谱面文件
+            with open(beatmap_path, 'r', encoding='utf-8') as f:
+                lines = f.readlines()
+                
+            # 查找TimingPoints部分
+            timing_section = False
+            timing_points = []
+            
+            for line in lines:
+                line = line.strip()
+                
+                if line == "[TimingPoints]":
+                    timing_section = True
+                    continue
+                    
+                if timing_section and line.startswith("["):
+                    timing_section = False
+                    break
+                    
+                if timing_section and line and not line.startswith("//"):
+                    timing_points.append(line.split(","))
+            
+            # 查找主要BPM点
+            main_bpm = 0
+            for point in timing_points:
+                if len(point) >= 2:
+                    ms_per_beat = float(point[1])
+                    if ms_per_beat > 0:  # 正值表示实际BPM，而不是继承的BPM
+                        main_bpm = 60000 / ms_per_beat
+                        break
+            
+            if main_bpm <= 0:
+                self.analysis_error.emit("无法从谱面中提取有效的BPM")
+                return False
+                
+            # 设置BPM
+            self.manual_bpm = main_bpm
+            self.bpm_source = "beatmap"
+            
+            # 更新features字典中的BPM
+            if self.features:
+                self.features["bpm"] = main_bpm
+                self.features["bpm_source"] = "beatmap"
+                
+            return True
+        except Exception as e:
+            self.analysis_error.emit(f"从谱面导入BPM失败: {str(e)}")
+            return False
     
     def get_osu_timing_points(self) -> List[Tuple[float, float]]:
         """

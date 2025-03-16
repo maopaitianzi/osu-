@@ -229,8 +229,10 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
         
         # 文件选择部分
         file_group = QtWidgets.QGroupBox("音频文件")
-        file_layout = QtWidgets.QHBoxLayout(file_group)
+        file_layout = QtWidgets.QVBoxLayout(file_group)
         
+        # 文件选择行
+        file_row = QtWidgets.QHBoxLayout()
         self.file_path = QtWidgets.QLineEdit()
         self.file_path.setPlaceholderText("请选择.mp3或.wav文件...")
         
@@ -241,8 +243,78 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
             pass  # 如果图标不存在，则不设置图标
         browse_btn.clicked.connect(self.browse_audio)
         
-        file_layout.addWidget(self.file_path, 3)
-        file_layout.addWidget(browse_btn, 1)
+        file_row.addWidget(self.file_path, 3)
+        file_row.addWidget(browse_btn, 1)
+        
+        file_layout.addLayout(file_row)
+        
+        # BPM设置行
+        bpm_row = QtWidgets.QHBoxLayout()
+        
+        # 自动检测BPM选项
+        self.auto_bpm_rb = QtWidgets.QRadioButton("自动检测BPM")
+        self.auto_bpm_rb.setChecked(True)
+        bpm_row.addWidget(self.auto_bpm_rb)
+        
+        # 手动设置BPM选项
+        self.manual_bpm_rb = QtWidgets.QRadioButton("手动设置BPM:")
+        bpm_row.addWidget(self.manual_bpm_rb)
+        
+        # BPM输入框
+        self.bpm_input = QtWidgets.QDoubleSpinBox()
+        self.bpm_input.setRange(20, 300)
+        self.bpm_input.setValue(120)
+        self.bpm_input.setSingleStep(0.1)
+        self.bpm_input.setDecimals(1)
+        self.bpm_input.setEnabled(False)
+        bpm_row.addWidget(self.bpm_input)
+        
+        # 从谱面导入BPM
+        self.import_bpm_btn = QtWidgets.QPushButton("从谱面导入BPM")
+        self.import_bpm_btn.setEnabled(False)
+        self.import_bpm_btn.clicked.connect(self.import_bpm_from_beatmap)
+        bpm_row.addWidget(self.import_bpm_btn)
+        
+        # 添加一些弹性空间
+        bpm_row.addStretch(1)
+        
+        # 连接按钮组的信号
+        self.auto_bpm_rb.toggled.connect(self.toggle_bpm_mode)
+        self.manual_bpm_rb.toggled.connect(self.toggle_bpm_mode)
+        
+        file_layout.addLayout(bpm_row)
+        
+        # GPU设置选项
+        gpu_row = QtWidgets.QHBoxLayout()
+        
+        # 检测GPU是否可用
+        gpu_available = 'TORCH_AVAILABLE' in globals() and TORCH_AVAILABLE and torch.cuda.is_available()
+        
+        # 添加GPU加速复选框
+        self.use_gpu_cb = QtWidgets.QCheckBox("使用GPU加速分析")
+        self.use_gpu_cb.setChecked(gpu_available)
+        self.use_gpu_cb.setEnabled(gpu_available)
+        
+        if not gpu_available:
+            if 'TORCH_AVAILABLE' not in globals() or not TORCH_AVAILABLE:
+                gpu_status = "未安装PyTorch库，GPU加速不可用"
+            else:
+                gpu_status = "未检测到可用GPU"
+            self.use_gpu_cb.setToolTip(gpu_status)
+        else:
+            self.use_gpu_cb.setToolTip(f"检测到 {torch.cuda.device_count()} 个可用GPU")
+        
+        gpu_row.addWidget(self.use_gpu_cb)
+        
+        # 自动导出复选框
+        self.auto_export_cb = QtWidgets.QCheckBox("自动导出分析结果")
+        self.auto_export_cb.setChecked(False)
+        gpu_row.addWidget(self.auto_export_cb)
+        
+        # 添加弹性空间
+        gpu_row.addStretch(1)
+        
+        file_layout.addLayout(gpu_row)
         
         generate_layout.addWidget(file_group)
         
@@ -319,12 +391,12 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
         self.progress_bar.setValue(0)
         
         # 操作按钮
-        analyze_btn = QtWidgets.QPushButton("分析音频")
+        self.analyze_btn = QtWidgets.QPushButton("分析音频")
         try:
-            analyze_btn.setIcon(QtGui.QIcon("gui/resources/analyze_icon.png"))
+            self.analyze_btn.setIcon(QtGui.QIcon("gui/resources/analyze_icon.png"))
         except:
             pass  # 如果图标不存在，则不设置图标
-        analyze_btn.clicked.connect(self.analyze_audio)
+        self.analyze_btn.clicked.connect(self.analyze_audio)
         
         generate_btn = QtWidgets.QPushButton("生成谱面")
         try:
@@ -361,7 +433,7 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
         
         # 添加到布局
         actions_layout.addWidget(self.progress_bar, 3)
-        actions_layout.addWidget(analyze_btn, 1)
+        actions_layout.addWidget(self.analyze_btn, 1)
         actions_layout.addWidget(generate_btn, 1)
         actions_layout.addWidget(preview_btn, 1)
         actions_layout.addWidget(export_btn, 1)
@@ -1081,34 +1153,30 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
         visualization_group = QtWidgets.QGroupBox("可视化设置")
         visualization_layout = QtWidgets.QVBoxLayout(visualization_group)
         
-        # 添加启用可视化的复选框
+        # 显示启用可视化的复选框
         self.enable_visualization_cb = QtWidgets.QCheckBox("启用音频可视化 (可能影响性能)")
-        self.enable_visualization_cb.setChecked(False)  # 默认关闭
+        self.enable_visualization_cb.setChecked(True)
         self.enable_visualization_cb.stateChanged.connect(self.toggle_visualization)
+        visualization_layout.addWidget(self.enable_visualization_cb)
         
         # 添加可视化质量选项
         viz_quality_layout = QtWidgets.QHBoxLayout()
-        
         viz_quality_label = QtWidgets.QLabel("可视化质量:")
         self.viz_quality_combo = QtWidgets.QComboBox()
         self.viz_quality_combo.addItems(["低 (流畅)", "中 (平衡)", "高 (精细)"])
         self.viz_quality_combo.setCurrentIndex(1)  # 默认选择中等质量
-        
         viz_quality_layout.addWidget(viz_quality_label)
         viz_quality_layout.addWidget(self.viz_quality_combo)
         viz_quality_layout.addStretch()
+        visualization_layout.addLayout(viz_quality_layout)
         
         # 添加高级可视化选项
         self.enable_realtime_viz_cb = QtWidgets.QCheckBox("启用实时可视化 (需要更高性能)")
         self.enable_realtime_viz_cb.setChecked(False)
+        visualization_layout.addWidget(self.enable_realtime_viz_cb)
         
         self.cache_visualizations_cb = QtWidgets.QCheckBox("缓存可视化结果")
         self.cache_visualizations_cb.setChecked(True)
-        
-        # 添加到可视化布局
-        visualization_layout.addWidget(self.enable_visualization_cb)
-        visualization_layout.addLayout(viz_quality_layout)
-        visualization_layout.addWidget(self.enable_realtime_viz_cb)
         visualization_layout.addWidget(self.cache_visualizations_cb)
         
         # 添加设置组到设置布局
@@ -1138,32 +1206,48 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
     
     def analyze_audio(self):
         """分析音频文件"""
-        file_path = self.file_path.text()
-        if not file_path or not os.path.exists(file_path):
-            QtWidgets.QMessageBox.warning(self, "警告", "请先选择有效的音频文件")
+        # 检查音频文件路径
+        audio_path = self.file_path.text()
+        if not audio_path or not os.path.exists(audio_path):
+            QtWidgets.QMessageBox.warning(self, "路径错误", "请选择有效的音频文件。")
             return
         
-        # 更新UI状态
-        self.status_label.setText("正在加载音频...")
-        self.progress_bar.setValue(0)
+        # 禁用分析按钮，防止重复操作
+        self.analyze_btn.setEnabled(False)
+        
+        # 准备音频分析器
+        self.audio_analyzer = AudioAnalyzer(use_gpu=self.use_gpu_cb.isChecked())
+        
+        # 连接信号
+        self.audio_analyzer.analysis_progress.connect(self.update_analysis_progress)
+        self.audio_analyzer.analysis_complete.connect(self.handle_analysis_complete)
+        self.audio_analyzer.analysis_error.connect(self.handle_analysis_error)
         
         # 加载音频文件
-        if not self.audio_analyzer.load_audio(file_path):
-            QtWidgets.QMessageBox.warning(self, "错误", "音频文件加载失败")
-            self.status_label.setText("音频加载失败")
+        success = self.audio_analyzer.load_audio(audio_path)
+        if not success:
+            QtWidgets.QMessageBox.warning(self, "加载失败", "无法加载音频文件，请检查文件格式。")
+            self.analyze_btn.setEnabled(True)
             return
         
-        # 更新UI状态
-        self.status_label.setText("正在分析音频...")
-        
-        # 在后台线程中执行分析，避免界面卡顿
+        # 检查是否使用手动BPM
+        if self.manual_bpm_rb.isChecked():
+            bpm = self.bpm_input.value()
+            self.audio_analyzer.set_manual_bpm(bpm)
+            
+        # 创建QThread以避免UI阻塞
         self.analysis_thread = QtCore.QThread()
         self.audio_analyzer.moveToThread(self.analysis_thread)
         
-        # 连接信号
+        # 线程开始和结束时的处理
         self.analysis_thread.started.connect(self.audio_analyzer.analyze)
+        self.audio_analyzer.analysis_complete.connect(self.analysis_thread.quit)
+        self.audio_analyzer.analysis_error.connect(self.analysis_thread.quit)
+        self.analysis_thread.finished.connect(lambda: self.analyze_btn.setEnabled(True))
         
-        # 启动线程
+        # 开始分析
+        self.status_label.setText("正在分析音频...")
+        self.progress_bar.setValue(0)
         self.analysis_thread.start()
     
     def update_analysis_progress(self, progress):
@@ -1194,10 +1278,16 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
         
         # 获取基本音频信息
         bpm = features.get("bpm", 0)
+        bpm_source = features.get("bpm_source", "auto")
         beat_count = len(features.get("beat_times", []))
         
+        # 更新BPM输入框
+        self.bpm_input.setValue(bpm)
+        
         # 更新状态文本
-        self.status_label.setText(f"音频分析完成! BPM: {bpm}, 节拍数: {beat_count}")
+        bpm_source_text = {"auto": "自动检测", "manual": "手动设置", "beatmap": "从谱面导入"}
+        source = bpm_source_text.get(bpm_source, "未知")
+        self.status_label.setText(f"音频分析完成! BPM: {bpm} ({source}), 节拍数: {beat_count}")
         
         # 注释掉提示框，避免打断后续操作
         # QtWidgets.QMessageBox.information(
@@ -3110,6 +3200,51 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
             self.training_plot_layout.addWidget(label)
         except Exception as e:
             self.add_training_log(f"更新图表失败: {str(e)}")
+
+    def toggle_bpm_mode(self, checked):
+        """切换BPM设置模式"""
+        # 只有当切换到选中状态时才执行
+        if not checked:
+            return
+            
+        # 根据选中的按钮更新UI状态
+        self.bpm_input.setEnabled(self.manual_bpm_rb.isChecked())
+        self.import_bpm_btn.setEnabled(self.manual_bpm_rb.isChecked())
+        
+    def import_bpm_from_beatmap(self):
+        """从谱面文件导入BPM"""
+        # 检查音频文件是否已加载
+        if not hasattr(self, 'audio_analyzer') or self.audio_analyzer.y is None:
+            QtWidgets.QMessageBox.warning(self, "操作失败", "请先加载音频文件")
+            return
+            
+        # 打开文件对话框选择谱面文件
+        file_dialog = QtWidgets.QFileDialog()
+        beatmap_path, _ = file_dialog.getOpenFileName(
+            self, "选择osu谱面文件", 
+            "", 
+            "osu谱面文件 (*.osu)"
+        )
+        
+        if not beatmap_path:
+            return
+            
+        # 导入BPM
+        success = self.audio_analyzer.import_beatmap_bpm(beatmap_path)
+        
+        if success:
+            # 更新UI
+            imported_bpm = self.audio_analyzer.get_bpm()
+            self.bpm_input.setValue(imported_bpm)
+            self.status_label.setText(f"已成功从谱面导入BPM: {imported_bpm}")
+            
+            # 选中手动BPM选项
+            self.manual_bpm_rb.setChecked(True)
+            
+            # 重新分析
+            self.analyze_audio()
+        else:
+            QtWidgets.QMessageBox.warning(self, "导入失败", "无法从谱面文件导入BPM")
 
 def main():
     """程序入口函数"""

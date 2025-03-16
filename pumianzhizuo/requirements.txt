@@ -5,12 +5,16 @@ torchvision==0.20.1+cu121
 tensorboard==2.19.0
 
 # 音频处理库
-librosa==0.11.0
+librosa==0.10.1
 soundfile==0.13.1
 soxr==0.5.0.post1
+numba==0.61.0
+audioread==3.0.1
+ffmpeg-python==0.2.0
+demucs==4.0.1
 
 # 数据处理与科学计算
-numpy==1.26.0
+numpy==1.24.3
 pandas==2.1.0
 scipy==1.15.2
 scikit-learn==1.6.1
@@ -23,4 +27,10 @@ pillow==11.1.0
 
 # 工具库
 tqdm==4.67.1
-requests==2.32.3 
+requests==2.32.3
+joblib==1.4.2
+
+# 可选依赖
+# 如果需要使用GPU加速，确保已安装支持CUDA的PyTorch版本
+# 可通过以下命令安装:
+# pip install torch torchaudio torchvision --index-url https://download.pytorch.org/whl/cu121 
