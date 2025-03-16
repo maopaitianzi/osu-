@@ -66,197 +66,247 @@ class AudioVisualizer(QtWidgets.QWidget):
     - 音量变化图
     """
     
+    # 定义信号
+    visualization_changed = QtCore.pyqtSignal(str)  # 可视化类型改变信号
+    source_changed = QtCore.pyqtSignal(str)  # 音频源改变信号
+    
     def __init__(self, parent=None):
+        """初始化可视化器"""
         super().__init__(parent)
-        self.audio_data = None
-        self.audio_features = None
+        self.y = None  # 音频数据
+        self.sr = None  # 采样率
+        self.features = {}  # 音频特征
+        self.current_view = "waveform"  # 当前可视化类型
+        self.available_sources = ["original"]  # 可用音频源
+        self.current_source = "original"  # 当前音频源
+        self.separated_sources = {}  # 分离的音频源
         
-        # 创建UI
         self.init_ui()
     
     def init_ui(self):
-        """初始化UI"""
+        """初始化用户界面"""
         # 主布局
-        self.layout = QtWidgets.QVBoxLayout(self)
+        main_layout = QtWidgets.QVBoxLayout(self)
+        main_layout.setContentsMargins(0, 0, 0, 0)
         
-        # 创建工具栏
-        self.toolbar = QtWidgets.QHBoxLayout()
+        # 顶部工具栏
+        toolbar = QtWidgets.QHBoxLayout()
         
-        # 可视化类型选择组
-        self.viz_type_group = QtWidgets.QButtonGroup(self)
+        # 可视化类型选择
+        self.view_selector = QtWidgets.QComboBox()
+        self.view_selector.addItems([
+            "波形图 (Waveform)", 
+            "频谱图 (Spectrum)", 
+            "梅尔频谱图 (Mel Spectrogram)",
+            "音高色度图 (Chroma)",
+            "音量包络 (Volume)"
+        ])
+        self.view_selector.currentIndexChanged.connect(self._on_view_changed)
         
-        # 波形按钮
-        self.waveform_btn = QtWidgets.QRadioButton("波形图")
-        self.waveform_btn.setChecked(True)
-        self.viz_type_group.addButton(self.waveform_btn, 1)
+        # 源选择下拉框
+        self.source_selector = QtWidgets.QComboBox()
+        self.source_selector.addItem("原始音频 (Original)")
+        self.source_selector.currentIndexChanged.connect(self._on_source_changed)
         
-        # 频谱按钮
-        self.spectrum_btn = QtWidgets.QRadioButton("频谱图")
-        self.viz_type_group.addButton(self.spectrum_btn, 2)
+        # 添加标签
+        toolbar.addWidget(QtWidgets.QLabel("可视化类型:"))
+        toolbar.addWidget(self.view_selector)
+        toolbar.addSpacing(20)
+        toolbar.addWidget(QtWidgets.QLabel("音频源:"))
+        toolbar.addWidget(self.source_selector)
+        toolbar.addStretch()
         
-        # 梅尔频谱按钮
-        self.mel_btn = QtWidgets.QRadioButton("梅尔频谱")
-        self.viz_type_group.addButton(self.mel_btn, 3)
-        
-        # 色度图按钮
-        self.chroma_btn = QtWidgets.QRadioButton("色度图")
-        self.viz_type_group.addButton(self.chroma_btn, 4)
-        
-        # 音量变化按钮
-        self.volume_btn = QtWidgets.QRadioButton("音量/能量")
-        self.viz_type_group.addButton(self.volume_btn, 5)
-        
-        # 添加到工具栏
-        self.toolbar.addWidget(self.waveform_btn)
-        self.toolbar.addWidget(self.spectrum_btn)
-        self.toolbar.addWidget(self.mel_btn)
-        self.toolbar.addWidget(self.chroma_btn)
-        self.toolbar.addWidget(self.volume_btn)
-        
-        # 添加显示特征复选框
-        self.show_beats_cb = QtWidgets.QCheckBox("显示节拍")
-        self.show_beats_cb.setChecked(True)
-        
-        self.show_sections_cb = QtWidgets.QCheckBox("显示段落")
-        self.show_sections_cb.setChecked(True)
-        
-        # 添加到工具栏
-        self.toolbar.addStretch()
-        self.toolbar.addWidget(self.show_beats_cb)
-        self.toolbar.addWidget(self.show_sections_cb)
-        
-        # 添加导出按钮
+        # 导出按钮
         self.export_btn = QtWidgets.QPushButton("导出当前视图")
-        self.export_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #6666FF;
-                color: white;
-                border: none;
-                border-radius: 5px;
-                padding: 4px 8px;
-                font-size: 12px;
-            }
-            QPushButton:hover {
-                background-color: #8888FF;
-            }
-            QPushButton:pressed {
-                background-color: #4444CC;
-            }
-        """)
         self.export_btn.clicked.connect(self.export_current_view)
-        self.toolbar.addWidget(self.export_btn)
+        toolbar.addWidget(self.export_btn)
         
-        # 创建可视化画布
-        self.canvas = AudioVisualizerCanvas(self, width=10, height=4)
-        
-        # 添加到主布局
-        self.layout.addLayout(self.toolbar)
-        self.layout.addWidget(self.canvas)
+        # 可视化画布
+        self.canvas = AudioVisualizerCanvas(self)
         
         # 信息面板
-        self.info_panel = QtWidgets.QLabel("未加载音频")
+        self.info_panel = QtWidgets.QTextEdit()
+        self.info_panel.setReadOnly(True)
+        self.info_panel.setMaximumHeight(100)
         self.info_panel.setStyleSheet("""
-            background-color: #333333;
+            background-color: #1A1A1A; 
             color: #FFFFFF;
-            padding: 5px;
-            border-radius: 3px;
+            border: 1px solid #333;
+            font-family: "Consolas", monospace;
         """)
         
-        self.layout.addWidget(self.info_panel)
+        # 将各部分添加到主布局
+        main_layout.addLayout(toolbar)
+        main_layout.addWidget(self.canvas, 1)
+        main_layout.addWidget(self.info_panel)
         
-        # 连接信号
-        self.viz_type_group.buttonClicked.connect(self.update_visualization)
-        self.show_beats_cb.stateChanged.connect(self.update_visualization)
-        self.show_sections_cb.stateChanged.connect(self.update_visualization)
+        # 设置默认内容
+        self.update_info_panel()
     
     def set_audio_data(self, y: np.ndarray, sr: int):
         """设置音频数据"""
-        self.audio_data = {"y": y, "sr": sr}
+        self.y = y
+        self.sr = sr
         self.update_visualization()
     
     def set_audio_features(self, features: Dict):
         """设置音频特征数据"""
-        self.audio_features = features
+        self.features = features
+        
+        # 更新音频源选项
+        if "available_sources" in features:
+            self.available_sources = features["available_sources"]
+            self._update_source_selector()
+            
         self.update_info_panel()
         self.update_visualization()
     
+    def _update_source_selector(self):
+        """更新音频源选择器的选项"""
+        # 保存当前选中的音频源
+        current_source = self.current_source
+        
+        # 清空并重新添加选项
+        self.source_selector.clear()
+        
+        # 添加原始音频选项
+        if "original" in self.available_sources:
+            self.source_selector.addItem("原始音频 (Original)", "original")
+            
+        # 添加分离的音频源选项
+        source_display_names = {
+            "vocals": "人声 (Vocals)",
+            "drums": "鼓声 (Drums)",
+            "bass": "贝斯 (Bass)",
+            "other": "其他乐器 (Other)"
+        }
+        
+        for source in self.available_sources:
+            if source != "original" and source in source_display_names:
+                self.source_selector.addItem(source_display_names[source], source)
+        
+        # 尝试恢复之前选中的音频源
+        index = self.source_selector.findData(current_source)
+        if index >= 0:
+            self.source_selector.setCurrentIndex(index)
+        else:
+            # 如果找不到之前的音频源，默认选择第一个
+            self.current_source = self.source_selector.itemData(0)
+    
+    def _on_source_changed(self, index: int):
+        """当音频源选择改变时触发"""
+        if index >= 0:
+            source = self.source_selector.itemData(index)
+            if source and source != self.current_source:
+                self.current_source = source
+                self.source_changed.emit(source)
+                self.update_visualization()
+                self.update_info_panel()
+    
     def update_info_panel(self):
         """更新信息面板"""
-        if self.audio_features is None:
-            self.info_panel.setText("未加载音频")
+        if not self.features:
+            self.info_panel.setText("未加载音频数据")
             return
+            
+        # 获取基本信息
+        info_text = []
         
-        info_text = ""
+        # 显示当前活跃音频源
+        if "active_source" in self.features:
+            source_display = {
+                "original": "原始音频",
+                "vocals": "人声",
+                "drums": "鼓声",
+                "bass": "贝斯",
+                "other": "其他乐器"
+            }
+            active_source = self.features["active_source"]
+            info_text.append(f"活跃音频源: {source_display.get(active_source, active_source)}")
         
-        # 基本信息
-        if "duration" in self.audio_features:
-            duration_mins = int(self.audio_features["duration"] // 60)
-            duration_secs = int(self.audio_features["duration"] % 60)
-            info_text += f"时长: {duration_mins}分{duration_secs}秒 | "
+        # 显示基本音频信息
+        if "sample_rate" in self.features and "duration" in self.features:
+            sr = self.features["sample_rate"]
+            duration = self.features["duration"]
+            info_text.append(f"采样率: {sr} Hz | 时长: {duration:.2f} 秒")
+            
+        # 显示BPM信息
+        if "bpm" in self.features and "beat_source" in self.features:
+            bpm = self.features["bpm"]
+            source = self.features["beat_source"]
+            source_display = {
+                "default": "自动检测",
+                "librosa": "Librosa算法",
+                "tempo": "节拍检测",
+                "manual": "手动设置",
+                "beatmap": "谱面导入"
+            }
+            info_text.append(f"BPM: {bpm:.1f} | 来源: {source_display.get(source, source)}")
+            
+        # 显示当前可视化类型
+        view_display = {
+            "waveform": "波形图",
+            "spectrum": "频谱图",
+            "melspectrogram": "梅尔频谱图",
+            "chroma": "音高色度图",
+            "volume": "音量包络"
+        }
+        info_text.append(f"当前视图: {view_display.get(self.current_view, self.current_view)}")
         
-        # BPM
-        if "bpm" in self.audio_features:
-            info_text += f"BPM: {self.audio_features['bpm']} | "
-        
-        # 节拍数
-        if "beat_times" in self.audio_features:
-            info_text += f"节拍数: {len(self.audio_features['beat_times'])} | "
-        
-        # 规律性
-        if "beat_regularity" in self.audio_features:
-            regularity = self.audio_features["beat_regularity"] * 100
-            info_text += f"节奏规律性: {regularity:.1f}% | "
-        
-        # 段落数
-        if "sections" in self.audio_features:
-            info_text += f"段落数: {len(self.audio_features['sections'])} | "
-        
-        # 过渡点数
-        if "transitions" in self.audio_features:
-            info_text += f"过渡点数: {len(self.audio_features['transitions'])}"
-        
-        self.info_panel.setText(info_text)
+        # 设置文本
+        self.info_panel.setText(" | ".join(info_text))
     
     def update_visualization(self):
-        """根据选择的类型更新可视化"""
-        # 清除当前图像
-        self.canvas.axes.clear()
-        
-        # 获取当前选中的可视化类型
-        viz_type = self.viz_type_group.checkedId()
-        
-        # 如果没有数据可视化，则显示提示
-        if self.audio_data is None and self.audio_features is None:
-            self.canvas.axes.text(
-                0.5, 0.5, "请先加载音频文件进行分析", 
-                horizontalalignment='center', verticalalignment='center',
-                fontsize=14, color='#FF66AA'
-            )
-            self.canvas.draw()
+        """更新可视化"""
+        if self.y is None or self.sr is None:
             return
+            
+        # 清除画布
+        self.canvas.clear()
         
-        # 根据不同的可视化类型进行绘制
-        if viz_type == 1:  # 波形图
+        # 根据当前可视化类型绘制
+        if self.current_view == "waveform":
             self._draw_waveform()
-        elif viz_type == 2:  # 频谱图
+        elif self.current_view == "spectrum":
             self._draw_spectrum()
-        elif viz_type == 3:  # 梅尔频谱
+        elif self.current_view == "melspectrogram":
             self._draw_mel_spectrogram()
-        elif viz_type == 4:  # 色度图
+        elif self.current_view == "chroma":
             self._draw_chroma()
-        elif viz_type == 5:  # 音量变化
+        elif self.current_view == "volume":
             self._draw_volume()
-        
+            
         # 绘制
         self.canvas.draw()
     
+    def _get_current_audio_data(self):
+        """获取当前选中的音频源数据"""
+        if self.current_source == "original" or not hasattr(self, 'separated_sources'):
+            return self.y
+            
+        # 如果分离后的音频源可用，使用它
+        if self.current_source in self.separated_sources:
+            return self.separated_sources[self.current_source]
+            
+        # 否则使用原始音频
+        return self.y
+    
+    def _on_view_changed(self, index: int):
+        """当可视化类型选择改变时触发"""
+        view_types = ["waveform", "spectrum", "melspectrogram", "chroma", "volume"]
+        if index >= 0 and index < len(view_types):
+            self.current_view = view_types[index]
+            self.visualization_changed.emit(self.current_view)
+            self.update_visualization()
+            self.update_info_panel()
+    
     def _draw_waveform(self):
         """绘制波形图"""
-        if self.audio_data is None:
+        if self.y is None:
             return
         
-        y = self.audio_data["y"]
-        sr = self.audio_data["sr"]
+        y = self._get_current_audio_data()
+        sr = self.sr
         
         # 创建时间轴
         times = np.linspace(0, len(y) / sr, len(y))
@@ -274,29 +324,19 @@ class AudioVisualizer(QtWidgets.QWidget):
         self.canvas.axes.set_ylabel("振幅", fontsize=12, color='white')
         
         # 绘制节拍线
-        if self.show_beats_cb.isChecked() and self.audio_features and "beat_times" in self.audio_features:
-            for beat_time in self.audio_features["beat_times"]:
+        if self.features and "beat_times" in self.features:
+            for beat_time in self.features["beat_times"]:
                 self.canvas.axes.axvline(x=beat_time, color='white', alpha=0.3, linewidth=0.5)
-        
-        # 绘制段落标记
-        if self.show_sections_cb.isChecked() and self.audio_features and "sections" in self.audio_features:
-            for section_time in self.audio_features["sections"]:
-                self.canvas.axes.axvline(x=section_time, color='#00FFFF', alpha=0.5, linewidth=1.0)
-        
-        # 绘制过渡点
-        if self.audio_features and "transitions" in self.audio_features:
-            for transition_time in self.audio_features["transitions"]:
-                self.canvas.axes.axvline(x=transition_time, color='#FFFF00', alpha=0.5, linewidth=1.0)
     
     def _draw_spectrum(self):
         """绘制频谱图"""
-        if self.audio_data is None:
+        if self.y is None:
             return
         
         import librosa
         
-        y = self.audio_data["y"]
-        sr = self.audio_data["sr"]
+        y = self._get_current_audio_data()
+        sr = self.sr
         
         # 计算短时傅里叶变换 (STFT)
         D = librosa.stft(y)
@@ -340,23 +380,18 @@ class AudioVisualizer(QtWidgets.QWidget):
             cbar.ax.yaxis.label.set_color('white')
         
         # 绘制节拍线
-        if self.show_beats_cb.isChecked() and self.audio_features and "beat_times" in self.audio_features:
-            for beat_time in self.audio_features["beat_times"]:
+        if self.features and "beat_times" in self.features:
+            for beat_time in self.features["beat_times"]:
                 self.canvas.axes.axvline(x=beat_time, color='white', alpha=0.3, linewidth=0.5)
-        
-        # 绘制段落标记
-        if self.show_sections_cb.isChecked() and self.audio_features and "sections" in self.audio_features:
-            for section_time in self.audio_features["sections"]:
-                self.canvas.axes.axvline(x=section_time, color='#00FFFF', alpha=0.5, linewidth=1.0)
     
     def _draw_mel_spectrogram(self):
         """绘制梅尔频谱图"""
         # 在方法开头导入librosa，确保所有代码路径都能访问到它
         import librosa
         
-        if self.audio_features and "visualization" in self.audio_features and "mel_spec_db" in self.audio_features["visualization"]:
+        if self.features and "visualization" in self.features and "mel_spec_db" in self.features["visualization"]:
             # 使用预计算的梅尔频谱
-            mel_spec_db = np.array(self.audio_features["visualization"]["mel_spec_db"])
+            mel_spec_db = np.array(self.features["visualization"]["mel_spec_db"])
             
             librosa.display.specshow(
                 mel_spec_db, 
@@ -365,10 +400,10 @@ class AudioVisualizer(QtWidgets.QWidget):
                 ax=self.canvas.axes,
                 cmap='magma'
             )
-        elif self.audio_data is not None:
+        elif self.y is not None:
             # 实时计算梅尔频谱
-            y = self.audio_data["y"]
-            sr = self.audio_data["sr"]
+            y = self._get_current_audio_data()
+            sr = self.sr
             
             # 计算梅尔频谱
             mel_spec = librosa.feature.melspectrogram(y=y, sr=sr)
@@ -401,23 +436,18 @@ class AudioVisualizer(QtWidgets.QWidget):
             cbar.ax.yaxis.label.set_color('white')
         
         # 绘制节拍线
-        if self.show_beats_cb.isChecked() and self.audio_features and "beat_times" in self.audio_features:
-            for beat_time in self.audio_features["beat_times"]:
+        if self.features and "beat_times" in self.features:
+            for beat_time in self.features["beat_times"]:
                 self.canvas.axes.axvline(x=beat_time, color='white', alpha=0.3, linewidth=0.5)
-        
-        # 绘制段落标记
-        if self.show_sections_cb.isChecked() and self.audio_features and "sections" in self.audio_features:
-            for section_time in self.audio_features["sections"]:
-                self.canvas.axes.axvline(x=section_time, color='#00FFFF', alpha=0.5, linewidth=1.0)
     
     def _draw_chroma(self):
         """绘制色度图"""
         # 在方法开头导入librosa，确保所有代码路径都能访问到它
         import librosa
         
-        if self.audio_features and "visualization" in self.audio_features and "chroma" in self.audio_features["visualization"]:
+        if self.features and "visualization" in self.features and "chroma" in self.features["visualization"]:
             # 使用预计算的色度图
-            chroma = np.array(self.audio_features["visualization"]["chroma"])
+            chroma = np.array(self.features["visualization"]["chroma"])
             
             librosa.display.specshow(
                 chroma, 
@@ -426,10 +456,10 @@ class AudioVisualizer(QtWidgets.QWidget):
                 ax=self.canvas.axes,
                 cmap='plasma'
             )
-        elif self.audio_data is not None:
+        elif self.y is not None:
             # 实时计算色度图
-            y = self.audio_data["y"]
-            sr = self.audio_data["sr"]
+            y = self._get_current_audio_data()
+            sr = self.sr
             
             # 计算色度图
             chroma = librosa.feature.chroma_stft(y=y, sr=sr)
@@ -453,22 +483,17 @@ class AudioVisualizer(QtWidgets.QWidget):
         self.canvas.axes.set_yticklabels(['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'])
         
         # 绘制节拍线
-        if self.show_beats_cb.isChecked() and self.audio_features and "beat_times" in self.audio_features:
-            for beat_time in self.audio_features["beat_times"]:
+        if self.features and "beat_times" in self.features:
+            for beat_time in self.features["beat_times"]:
                 self.canvas.axes.axvline(x=beat_time, color='white', alpha=0.3, linewidth=0.5)
-        
-        # 绘制段落标记
-        if self.show_sections_cb.isChecked() and self.audio_features and "sections" in self.audio_features:
-            for section_time in self.audio_features["sections"]:
-                self.canvas.axes.axvline(x=section_time, color='#00FFFF', alpha=0.5, linewidth=1.0)
     
     def _draw_volume(self):
         """绘制音量/能量变化图"""
         # 在方法开头导入librosa，确保所有代码路径都能访问到它
         import librosa
         
-        if self.audio_features and "volume" in self.audio_features:
-            volume_data = self.audio_features["volume"]
+        if self.features and "volume" in self.features:
+            volume_data = self.features["volume"]
             times = volume_data["times"]
             rms = volume_data["rms"]
             
@@ -481,8 +506,8 @@ class AudioVisualizer(QtWidgets.QWidget):
             self.canvas.axes.set_ylim(0, max(rms) * 1.1)
             
             # 绘制音量变化点
-            if "volume_changes" in self.audio_features:
-                change_times = self.audio_features["volume_changes"]
+            if "volume_changes" in self.features:
+                change_times = self.features["volume_changes"]
                 
                 for time in change_times:
                     # 找到最接近的索引
@@ -493,10 +518,10 @@ class AudioVisualizer(QtWidgets.QWidget):
                             color='#FFFF00', 
                             markersize=5
                         )
-        elif self.audio_data is not None:
+        elif self.y is not None:
             # 实时计算音量
-            y = self.audio_data["y"]
-            sr = self.audio_data["sr"]
+            y = self._get_current_audio_data()
+            sr = self.sr
             
             # 计算RMS能量
             rms = librosa.feature.rms(y=y)[0]
@@ -521,19 +546,9 @@ class AudioVisualizer(QtWidgets.QWidget):
         self.canvas.axes.set_ylabel("能量", fontsize=12, color='white')
         
         # 绘制节拍线
-        if self.show_beats_cb.isChecked() and self.audio_features and "beat_times" in self.audio_features:
-            for beat_time in self.audio_features["beat_times"]:
+        if self.features and "beat_times" in self.features:
+            for beat_time in self.features["beat_times"]:
                 self.canvas.axes.axvline(x=beat_time, color='white', alpha=0.3, linewidth=0.5)
-        
-        # 绘制段落标记
-        if self.show_sections_cb.isChecked() and self.audio_features and "sections" in self.audio_features:
-            for section_time in self.audio_features["sections"]:
-                self.canvas.axes.axvline(x=section_time, color='#00FFFF', alpha=0.5, linewidth=1.0)
-        
-        # 绘制过渡点
-        if self.audio_features and "transitions" in self.audio_features:
-            for transition_time in self.audio_features["transitions"]:
-                self.canvas.axes.axvline(x=transition_time, color='#FFFF00', alpha=0.5, linewidth=1.0)
     
     @property
     def fig(self):
@@ -543,7 +558,7 @@ class AudioVisualizer(QtWidgets.QWidget):
     def export_current_view(self):
         """导出当前视图为图像文件"""
         # 检查是否有数据可以导出
-        if self.audio_data is None and self.audio_features is None:
+        if self.y is None:
             QtWidgets.QMessageBox.warning(
                 self, "警告", "没有可导出的数据，请先加载音频文件"
             )

@@ -16,6 +16,8 @@
 - **音频段落检测**：自动检测歌曲的段落变化
 - **过渡点检测**：找出适合放置关键物件的过渡点
 - **谱面参数推荐**：根据音频特征推荐合适的谱面参数
+- **GPU加速支持**：需要CUDA环境
+- **人声分离功能**：使用Demucs模型将音频分离为人声、鼓声、贝斯和其他乐器
 
 ### AudioVisualizer 类
 
@@ -33,7 +35,7 @@
 
 ```python
 # 创建分析器
-analyzer = AudioAnalyzer()
+analyzer = AudioAnalyzer(use_gpu=True)
 
 # 加载音频文件
 analyzer.load_audio("your_audio.mp3")
@@ -61,6 +63,75 @@ visualizer.set_audio_data(analyzer.y, analyzer.sr)
 visualizer.set_audio_features(analyzer.features)
 ```
 
+### 人声分离功能
+
+新增的人声分离功能允许将音频分离为不同的声音组件，并对特定组件进行分析。
+
+```python
+from audio.analyzer import AudioAnalyzer
+
+# 创建分析器实例
+analyzer = AudioAnalyzer(use_gpu=True)  # 使用GPU加速推荐用于音频分离
+
+# 启用人声分离
+analyzer.set_use_source_separation(True)
+
+# 设置音频源优先级（默认为["vocals", "piano", "drums", "other"]）
+# 可以调整顺序以更改优先级
+analyzer.set_source_priority(["vocals", "drums", "bass", "other"])
+
+# 加载音频文件
+analyzer.load_audio("path/to/audio.mp3")
+
+# 执行分析（会自动进行音频分离）
+results = analyzer.analyze()
+
+# 获取可用的分离音频源
+available_sources = analyzer.get_available_sources()  # 例如：["vocals", "drums", "bass", "other", "original"]
+
+# 设置当前活跃的音频源（用于后续分析）
+analyzer.set_active_source("vocals")  # 切换到人声轨道
+
+# 导出分离的音频源
+exported_files = analyzer.export_separated_audio("path/to/output/directory")
+```
+
+### 可视化
+
+使用可视化器显示音频特征：
+
+```python
+from audio.analyzer import AudioAnalyzer
+from audio.visualizer import AudioVisualizer
+from PyQt5 import QtWidgets
+import sys
+
+# 创建应用
+app = QtWidgets.QApplication(sys.argv)
+
+# 创建可视化器
+viz = AudioVisualizer()
+
+# 创建分析器并启用人声分离
+analyzer = AudioAnalyzer(use_gpu=True)
+analyzer.set_use_source_separation(True)
+analyzer.load_audio("path/to/audio.mp3")
+
+# 执行分析
+results = analyzer.analyze()
+
+# 设置音频数据和特征
+viz.set_audio_data(analyzer.y, analyzer.sr)
+viz.set_audio_features(results)
+
+# 将分离的音频源设置给可视化器
+viz.separated_sources = analyzer.separated_sources
+
+# 显示可视化器
+viz.show()
+sys.exit(app.exec_())
+```
+
 ## 导出功能
 
 分析结果可以导出为JSON文件，便于谱面生成器使用：
@@ -81,4 +152,30 @@ output_path = analyzer.export_analysis_to_json("analysis_output.json")
 - **BPM检测**：使用动态规划节拍跟踪和调谐范围检测
 - **段落检测**：使用自相似矩阵和谱聚类
 - **频谱特征**：包括MFCC、色度图、频谱质心等
-- **过渡点检测**：结合节拍和音量变化检测 
+- **过渡点检测**：结合节拍和音量变化检测
+- **音频源分离**：使用Demucs v4模型将音频分离为不同组件
+
+## 注意事项
+
+1. 音频分离是一个计算密集型任务，建议在有GPU的环境中使用
+2. 首次使用时会下载Demucs模型（约2GB），请确保网络连接正常
+3. 分离大文件可能需要较长时间，请耐心等待
+4. 分离结果的质量取决于原始音频的质量和内容
+5. 音频分离功能需要CUDA环境支持
+
+## 音频源分离
+
+该功能使用Demucs v4模型将音频分离为以下组件：
+
+- **vocals**: 人声部分
+- **drums**: 鼓声/打击乐部分
+- **bass**: 低音部分
+- **other**: 其他乐器（包括钢琴、吉他等）
+
+分离的音频可以：
+
+1. 用于更精确的音频分析（例如，仅分析人声或鼓声部分）
+2. 导出为单独的音频文件
+3. 在可视化器中单独查看每个音轨
+
+可视化时，可以在界面中选择不同的音频源，分别查看它们的波形、频谱等特性。这有助于确定哪些音频部分最适合谱面制作。 

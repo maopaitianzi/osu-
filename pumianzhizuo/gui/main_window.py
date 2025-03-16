@@ -1179,8 +1179,38 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
         self.cache_visualizations_cb.setChecked(True)
         visualization_layout.addWidget(self.cache_visualizations_cb)
         
+        # 添加音频源分离设置
+        audio_separation_group = QtWidgets.QGroupBox("人声分离设置")
+        audio_separation_layout = QtWidgets.QVBoxLayout(audio_separation_group)
+        
+        # 启用人声分离复选框
+        self.enable_source_separation_cb = QtWidgets.QCheckBox("启用人声分离 (可能显著增加处理时间)")
+        self.enable_source_separation_cb.setChecked(False)
+        audio_separation_layout.addWidget(self.enable_source_separation_cb)
+        
+        # 添加优先级选择布局
+        priority_layout = QtWidgets.QHBoxLayout()
+        priority_label = QtWidgets.QLabel("音频源优先级:")
+        self.priority_combo = QtWidgets.QComboBox()
+        self.priority_combo.addItems([
+            "人声优先 (Vocals > Drums > Bass > Other)",
+            "鼓声优先 (Drums > Vocals > Bass > Other)",
+            "贝斯优先 (Bass > Drums > Vocals > Other)",
+            "钢琴/其他优先 (Other > Vocals > Drums > Bass)"
+        ])
+        priority_layout.addWidget(priority_label)
+        priority_layout.addWidget(self.priority_combo)
+        audio_separation_layout.addLayout(priority_layout)
+        
+        # 添加导出分离音频选项
+        self.export_separated_audio_cb = QtWidgets.QCheckBox("分析后导出分离的音频")
+        self.export_separated_audio_cb.setChecked(False)
+        audio_separation_layout.addWidget(self.export_separated_audio_cb)
+        
         # 添加设置组到设置布局
+        settings_layout.addWidget(audio_separation_group)
         settings_layout.addWidget(visualization_group)
+        
         settings_layout.addStretch()
         # 创建状态栏
         self.statusBar = QtWidgets.QStatusBar()
@@ -1222,6 +1252,22 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
         self.audio_analyzer.analysis_progress.connect(self.update_analysis_progress)
         self.audio_analyzer.analysis_complete.connect(self.handle_analysis_complete)
         self.audio_analyzer.analysis_error.connect(self.handle_analysis_error)
+        
+        # 配置人声分离设置
+        if hasattr(self, 'enable_source_separation_cb'):
+            self.audio_analyzer.set_use_source_separation(self.enable_source_separation_cb.isChecked())
+            
+            # 设置音频源优先级
+            if self.enable_source_separation_cb.isChecked():
+                priority_index = self.priority_combo.currentIndex()
+                if priority_index == 0:  # 人声优先
+                    self.audio_analyzer.set_source_priority(["vocals", "drums", "bass", "other"])
+                elif priority_index == 1:  # 鼓声优先
+                    self.audio_analyzer.set_source_priority(["drums", "vocals", "bass", "other"])
+                elif priority_index == 2:  # 贝斯优先
+                    self.audio_analyzer.set_source_priority(["bass", "drums", "vocals", "other"])
+                elif priority_index == 3:  # 钢琴/其他优先
+                    self.audio_analyzer.set_source_priority(["other", "vocals", "drums", "bass"])
         
         # 加载音频文件
         success = self.audio_analyzer.load_audio(audio_path)
@@ -1278,28 +1324,59 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
         
         # 获取基本音频信息
         bpm = features.get("bpm", 0)
-        bpm_source = features.get("bpm_source", "auto")
-        beat_count = len(features.get("beat_times", []))
+        bpm_source = features.get("beat_source", "default")
+        beat_count = len(features.get("beat_times", []) or [])
         
         # 更新BPM输入框
         self.bpm_input.setValue(bpm)
         
         # 更新状态文本
-        bpm_source_text = {"auto": "自动检测", "manual": "手动设置", "beatmap": "从谱面导入"}
+        bpm_source_text = {"default": "自动检测", "manual": "手动设置", "beatmap": "从谱面导入"}
         source = bpm_source_text.get(bpm_source, "未知")
-        self.status_label.setText(f"音频分析完成! BPM: {bpm} ({source}), 节拍数: {beat_count}")
         
-        # 注释掉提示框，避免打断后续操作
-        # QtWidgets.QMessageBox.information(
-        #     self, "分析完成", 
-        #     f"音频分析完成！\n"
-        #     f"检测到BPM：{bpm}\n"
-        #     f"节拍数：{beat_count}\n"
-        #     f"音频长度：{features.get('duration', 0):.1f}秒"
-        # )
+        # 显示活跃音频源信息
+        active_source = features.get("active_source", "original")
+        source_display = {
+            "original": "原始音频",
+            "vocals": "人声",
+            "drums": "鼓声",
+            "bass": "贝斯",
+            "other": "其他乐器"
+        }
+        source_text = source_display.get(active_source, active_source)
+        
+        self.status_label.setText(
+            f"音频分析完成! BPM: {bpm} ({source}), 节拍数: {beat_count}, 活跃源: {source_text}"
+        )
+        
+        # 如果开启了分离音频导出
+        if hasattr(self, 'export_separated_audio_cb') and self.export_separated_audio_cb.isChecked() and hasattr(self.audio_analyzer, 'separated_sources') and self.audio_analyzer.separated_sources:
+            # 获取输出目录
+            output_dir = self.output_path.text()
+            if not output_dir:
+                # 使用音频文件所在目录
+                output_dir = os.path.dirname(self.file_path.text())
+                
+            # 创建分离音频子目录
+            output_dir = os.path.join(output_dir, "separated_audio")
+            
+            # 导出分离的音频
+            exported_files = self.audio_analyzer.export_separated_audio(output_dir)
+            
+            if exported_files:
+                # 显示导出成功信息
+                export_paths = "\n".join([f"{k}: {os.path.basename(v)}" for k, v in exported_files.items()])
+                QtWidgets.QMessageBox.information(
+                    self, "导出成功", 
+                    f"分离的音频已导出到:\n{output_dir}\n\n{export_paths}"
+                )
         
         # 仅当可视化功能启用时才更新可视化器
         if self.enable_visualization_cb.isChecked():
+            # 设置分离的音频源（如果有）
+            if hasattr(self.audio_analyzer, 'separated_sources'):
+                self.audio_visualizer.separated_sources = self.audio_analyzer.separated_sources
+                
             self.audio_visualizer.set_audio_data(self.audio_analyzer.y, self.audio_analyzer.sr)
             self.audio_visualizer.set_audio_features(features)
         

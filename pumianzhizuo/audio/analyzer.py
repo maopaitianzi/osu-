@@ -25,6 +25,11 @@ scipy.signal.hann = windows.hann
 # 添加GPU加速相关导入
 import torch
 
+# 导入人声分离相关库
+from demucs.pretrained import get_model
+from demucs.apply import apply_model
+import tqdm
+
 # 检查GPU是否可用
 GPU_AVAILABLE = torch.cuda.is_available()
 
@@ -41,6 +46,7 @@ class AudioAnalyzer(QtCore.QObject):
     - 音频段落检测
     - 过渡点检测（适合osu谱面关键点）
     - GPU加速支持（需要CUDA环境）
+    - 人声分离功能（使用Demucs模型）
     """
     
     # 定义信号
@@ -48,28 +54,80 @@ class AudioAnalyzer(QtCore.QObject):
     analysis_complete = QtCore.pyqtSignal(dict)  # 分析完成信号，发送结果字典
     analysis_error = QtCore.pyqtSignal(str)  # 分析错误信号
     
+    # 定义音频源优先级选项
+    AUDIO_SOURCES = ["vocals", "drums", "bass", "other"]
+    DEFAULT_PRIORITY = ["vocals", "piano", "drums", "other"]
+    
     def __init__(self, use_gpu=False):
+        """
+        初始化音频分析器
+        
+        参数:
+            use_gpu: 是否使用GPU加速（如果可用）
+        """
         super().__init__()
-        self.audio_path = ""
-        self.y = None  # 音频数据
+        
+        # 音频数据
+        self.y = None  # 原始音频数据
         self.sr = None  # 采样率
-        self.features = {}  # 存储提取的特征
+        self.file_path = None  # 音频文件路径
+        self.hop_length = 512  # 默认帧移动长度
         
-        # 分析参数
-        self.hop_length = 512
-        self.onset_envelope = None
-        self.tempo = None
-        self.beats = None
-        
-        # BPM设置相关
+        # 分析结果
+        self.bpm = None  # 检测到的BPM
         self.manual_bpm = None  # 手动设置的BPM
-        self.bpm_source = "auto"  # BPM来源：auto, manual, beatmap
+        self.tempo = None  # 临时存储的tempo值
+        self.beat_times = None  # 节拍时间点
+        self.beat_strength = None  # 节拍强度
+        self.strong_beats = None  # 强拍位置
+        self.beat_confidence = None  # 节拍检测置信度
+        self.beat_source = "default"  # BPM来源
+        self.bpm_source = "auto"  # 兼容旧代码
         
-        # GPU设置
+        # 频谱特征
+        self.spectral_features = {}  # 频谱特征
+        
+        # 音量和段落
+        self.onset_envelope = None  # 音量起始包络
+        self.volume_envelope = {}  # 音量包络
+        self.volume_changes = []  # 音量变化点
+        self.sections = []  # 段落边界
+        self.transitions = []  # 过渡点
+        
+        # 节拍网格
+        self.beat_grid = []  # 理想节拍网格
+        self.grid_mapped_beats = []  # 映射到网格的节拍
+        self.osu_params = {}  # osu谱面参数
+        
+        # GPU加速设置
         self.use_gpu = use_gpu and GPU_AVAILABLE
+        self.device = torch.device("cpu")  # 默认为CPU
+        
+        # 人声分离相关
+        self.use_source_separation = False  # 是否使用人声分离
+        self.source_priority = self.DEFAULT_PRIORITY.copy()  # 音频源优先级
+        self.separated_sources = {}  # 保存分离后的音频源
+        self.active_source = None  # 当前活跃的音频源（用于分析）
+        self.demucs_model = None  # Demucs模型
+        
         if self.use_gpu:
+            self._init_gpu()
+    
+    def _init_gpu(self):
+        """初始化GPU相关资源"""
+        try:
             self.device = torch.device("cuda")
-        else:
+            # 设置一些CUDA优化参数
+            torch.backends.cudnn.benchmark = True
+            torch.backends.cudnn.enabled = True
+            # 打印GPU信息，便于调试
+            if torch.cuda.is_available():
+                gpu_name = torch.cuda.get_device_name(0)
+                gpu_mem = torch.cuda.get_device_properties(0).total_memory / (1024**3)
+                print(f"初始化GPU: {gpu_name}, 内存: {gpu_mem:.2f}GB")
+        except Exception as e:
+            print(f"GPU初始化失败: {str(e)}")
+            self.use_gpu = False
             self.device = torch.device("cpu")
     
     def load_audio(self, file_path: str) -> bool:
@@ -80,11 +138,26 @@ class AudioAnalyzer(QtCore.QObject):
             file_path: 音频文件路径
             
         返回:
-            加载是否成功
+            bool: 是否成功加载
         """
         try:
-            self.audio_path = file_path
+            self.file_path = file_path
             self.y, self.sr = librosa.load(file_path, sr=None)
+            self.active_source = "original"  # 设置当前活跃源为原始音频
+            
+            # 重置之前的分析结果
+            self.bpm = None
+            self.beat_times = None
+            self.spectral_features = {}
+            self.separated_sources = {}
+            
+            # 预先加载Demucs模型（如果启用了人声分离）
+            if self.use_source_separation and self.demucs_model is None:
+                try:
+                    self._load_demucs_model()
+                except Exception as e:
+                    self.analysis_error.emit(f"无法加载人声分离模型: {str(e)}")
+            
             return True
         except Exception as e:
             self.analysis_error.emit(f"加载音频文件失败: {str(e)}")
@@ -99,64 +172,98 @@ class AudioAnalyzer(QtCore.QObject):
         """
         self.use_gpu = use_gpu and GPU_AVAILABLE
         if self.use_gpu:
-            self.device = torch.device("cuda")
+            self._init_gpu()
         else:
             self.device = torch.device("cpu")
     
     def analyze(self) -> Dict:
         """
-        执行完整的音频分析，包括所有特征
+        进行全面音频分析
         
         返回:
-            包含所有分析结果的字典
+            dict: 分析结果字典
         """
+        # 检查是否有加载音频
         if self.y is None or self.sr is None:
-            self.analysis_error.emit("请先加载音频文件")
+            self.analysis_error.emit("没有加载音频数据，无法进行分析")
             return {}
         
+        # 如果启用了音频源分离，先进行分离
+        if self.use_source_separation and not self.separated_sources:
+            try:
+                self._separate_audio_sources()
+                # 根据优先级选择活跃源
+                self._select_active_source()
+            except Exception as e:
+                self.analysis_error.emit(f"音频源分离失败: {str(e)}")
+                # 回退到使用原始音频
+                self.active_source = "original"
+        
+        # 确保我们使用正确的音频数据进行分析
+        analysis_data = self._get_active_audio_data()
+            
         try:
-            # 重置特征字典
-            self.features = {}
+            # 发出起始进度信号
+            self.analysis_progress.emit(0)
             
-            # 发送进度信号
-            self.analysis_progress.emit(5)
-            
-            # 提取基本信息
-            self.features["duration"] = librosa.get_duration(y=self.y, sr=self.sr)
-            self.features["sample_rate"] = self.sr
+            # 初始化结果字典
+            result = {
+                "file_path": self.file_path,
+                "sample_rate": self.sr,
+                "duration": len(analysis_data) / self.sr,
+                "active_source": self.active_source
+            }
             
             # 检测BPM和节拍
-            self.analysis_progress.emit(10)
             self._detect_tempo_and_beats()
+            self.analysis_progress.emit(20)
             
             # 提取节拍强度
-            self.analysis_progress.emit(30)
             self._extract_beat_strength()
+            self.analysis_progress.emit(30)
             
             # 提取频谱特征
-            self.analysis_progress.emit(50)
             self._extract_spectral_features()
+            self.analysis_progress.emit(50)
             
             # 提取音量包络
-            self.analysis_progress.emit(70)
             self._extract_volume_envelope()
+            self.analysis_progress.emit(60)
             
             # 检测段落和过渡点
-            self.analysis_progress.emit(85)
             self._detect_sections_and_transitions()
+            self.analysis_progress.emit(80)
             
-            # 创建节拍网格（适合osu谱面）
-            self.analysis_progress.emit(95)
+            # 创建节拍网格
             self._create_beat_grid()
+            self.analysis_progress.emit(90)
             
-            # 完成分析
+            # 更新结果字典，添加分析结果
+            result.update({
+                "bpm": self.bpm,
+                "beat_source": self.beat_source,
+                "beat_times": self.beat_times.tolist() if self.beat_times is not None else None,
+                "beat_strength": self.beat_strength.tolist() if self.beat_strength is not None else None,
+                "beat_confidence": self.beat_confidence,
+                "spectral_features": self.spectral_features,
+                "volume_envelope": self.volume_envelope if hasattr(self, 'volume_envelope') else None,
+                "volume_changes": self.volume_changes if hasattr(self, 'volume_changes') else None,
+                "sections": self.sections if hasattr(self, 'sections') else None,
+                "transitions": self.transitions if hasattr(self, 'transitions') else None,
+                "beat_grid": self.beat_grid if hasattr(self, 'beat_grid') else None,
+                "grid_mapped_beats": self.grid_mapped_beats if hasattr(self, 'grid_mapped_beats') else None,
+                "osu_params": self.osu_params if hasattr(self, 'osu_params') else None,
+                "available_sources": list(self.separated_sources.keys()) + ["original"] if self.separated_sources else ["original"]
+            })
+            
+            # 发出完成信号
             self.analysis_progress.emit(100)
-            self.analysis_complete.emit(self.features)
+            self.analysis_complete.emit(result)
             
-            return self.features
+            return result
             
         except Exception as e:
-            self.analysis_error.emit(f"音频分析过程中出错: {str(e)}")
+            self.analysis_error.emit(f"音频分析过程中发生错误: {str(e)}")
             return {}
     
     def _to_gpu(self, data):
@@ -178,13 +285,16 @@ class AudioAnalyzer(QtCore.QObject):
     
     def _detect_tempo_and_beats(self) -> None:
         """检测BPM和节拍位置"""
+        # 获取当前活跃的音频数据
+        y = self._get_active_audio_data()
+        
         # 如果有手动设置的BPM，优先使用
-        if self.manual_bpm is not None and self.bpm_source != "auto":
+        if hasattr(self, 'manual_bpm') and self.manual_bpm is not None and hasattr(self, 'bpm_source') and self.bpm_source != "auto":
             self.tempo = self.manual_bpm
             
             # 计算onset强度包络
             self.onset_envelope = librosa.onset.onset_strength(
-                y=self.y, sr=self.sr, hop_length=self.hop_length
+                y=y, sr=self.sr, hop_length=self.hop_length
             )
             
             # 使用手动BPM进行节拍检测
@@ -217,7 +327,7 @@ class AudioAnalyzer(QtCore.QObject):
         else:
             # 计算onset强度包络
             self.onset_envelope = librosa.onset.onset_strength(
-                y=self.y, sr=self.sr, hop_length=self.hop_length
+                y=y, sr=self.sr, hop_length=self.hop_length
             )
             
             # 如果启用GPU，使用GPU加速
@@ -285,33 +395,25 @@ class AudioAnalyzer(QtCore.QObject):
         self.beats = librosa.frames_to_time(beats, sr=self.sr, hop_length=self.hop_length)
         
         # 存储结果
-        self.features["bpm"] = self.tempo
-        self.features["beat_times"] = self.beats.tolist()
+        self.bpm = self.tempo
+        self.beat_times = self.beats
+        self.beat_source = self.bpm_source if hasattr(self, 'bpm_source') else "default"
         
-        # 如果是手动设置的BPM，也保存原始的自动检测结果
-        if self.bpm_source != "auto" and "original" not in self.features:
-            # 存储原始自动检测的信息
-            self.features["original"] = {
-                "bpm_source": "auto",
-                "beat_times": self.beats.tolist()
-            }
-            
-        # 保存BPM来源
-        self.features["bpm_source"] = self.bpm_source
-        
-        # 高级分析：检测节奏规律性
-        if len(self.beats) > 1:
-            beat_intervals = np.diff(self.beats)
+        # 计算节拍检测置信度
+        if len(self.beat_times) > 1:
+            beat_intervals = np.diff(self.beat_times)
             regularity = 1.0 - np.std(beat_intervals) / np.mean(beat_intervals)
-            self.features["beat_regularity"] = float(max(0, regularity))  # 转换为float以便JSON序列化
+            self.beat_confidence = float(max(0, regularity))
+        else:
+            self.beat_confidence = 0.0
     
     def _extract_beat_strength(self) -> None:
         """提取每个节拍的强度"""
-        if self.onset_envelope is None or self.beats is None:
+        if self.onset_envelope is None or self.beat_times is None:
             return
         
         # 将节拍时间转换回帧
-        beat_frames = librosa.time_to_frames(self.beats, sr=self.sr, hop_length=self.hop_length)
+        beat_frames = librosa.time_to_frames(self.beat_times, sr=self.sr, hop_length=self.hop_length)
         
         # 确保所有帧都在有效范围内
         valid_frames = [f for f in beat_frames if f < len(self.onset_envelope)]
@@ -328,7 +430,7 @@ class AudioAnalyzer(QtCore.QObject):
                 normalized_strengths = beat_strengths
             
             # 存储结果
-            self.features["beat_strengths"] = normalized_strengths.tolist()
+            self.beat_strength = normalized_strengths
             
             # 检测强拍位置（强度大于均值的节拍）
             mean_strength = np.mean(normalized_strengths)
@@ -336,13 +438,16 @@ class AudioAnalyzer(QtCore.QObject):
                 i for i, strength in enumerate(normalized_strengths) 
                 if strength > mean_strength * 1.2
             ]
-            self.features["strong_beats"] = strong_beats
+            self.strong_beats = strong_beats
     
     def _extract_spectral_features(self) -> None:
         """提取频谱特征，使用GPU加速（如可用）"""
+        # 获取当前活跃的音频数据
+        y = self._get_active_audio_data()
+        
         if self.use_gpu:
             # 将音频数据转移到GPU
-            y_gpu = self._to_gpu(self.y)
+            y_gpu = self._to_gpu(y)
             
             # 使用GPU进行FFT（需要在torch中实现，这里展示概念）
             # 由于librosa不直接支持GPU，这里需要使用torch的函数
@@ -350,10 +455,11 @@ class AudioAnalyzer(QtCore.QObject):
             
             # 1. 使用torch实现STFT
             # 转换为浮点数以避免精度问题
-            y_float = y_gpu.float() if isinstance(y_gpu, torch.Tensor) else torch.tensor(self.y, dtype=torch.float32, device=self.device)
+            y_float = y_gpu.float() if isinstance(y_gpu, torch.Tensor) else torch.tensor(y, dtype=torch.float32, device=self.device)
             
             # 配置STFT参数 (与librosa兼容)
             n_fft = 2048
+            hop_length = 512  # 使用通用hop_length
             win_length = n_fft
             window = torch.hann_window(win_length, device=self.device)
             
@@ -361,7 +467,7 @@ class AudioAnalyzer(QtCore.QObject):
             D_gpu = torch.stft(
                 y_float, 
                 n_fft=n_fft, 
-                hop_length=self.hop_length, 
+                hop_length=hop_length, 
                 win_length=win_length, 
                 window=window, 
                 return_complex=True
@@ -376,69 +482,69 @@ class AudioAnalyzer(QtCore.QObject):
             # 由于后续处理仍使用librosa，需要暂时回到CPU
             # 未来可以完全用torch替代librosa实现GPU端完整处理
             mel_spec = librosa.feature.melspectrogram(
-                y=self.y, sr=self.sr, hop_length=self.hop_length, n_mels=128
+                y=y, sr=self.sr, hop_length=hop_length, n_mels=128
             )
         else:
             # 原始CPU实现
             # 计算短时傅里叶变换 (STFT)
-            D = librosa.stft(self.y, hop_length=self.hop_length)
+            hop_length = 512  # 使用通用hop_length
+            D = librosa.stft(y, hop_length=hop_length)
             
             # 计算频谱幅度
             magnitude = np.abs(D)
             
             # 计算梅尔频谱
             mel_spec = librosa.feature.melspectrogram(
-                y=self.y, sr=self.sr, hop_length=self.hop_length, n_mels=128
+                y=y, sr=self.sr, hop_length=hop_length, n_mels=128
             )
         
         # 转换为分贝单位
         mel_spec_db = librosa.power_to_db(mel_spec, ref=np.max)
         
-        # 计算色度图 (适合音符/和弦检测)
+        # 计算色谱图 (适合音符/和弦检测)
         chroma = librosa.feature.chroma_stft(
-            y=self.y, sr=self.sr, hop_length=self.hop_length
+            y=y, sr=self.sr, hop_length=hop_length
         )
         
         # 提取梅尔频谱对应的时间轴
-        times = librosa.times_like(mel_spec, sr=self.sr, hop_length=self.hop_length)
+        times = librosa.times_like(mel_spec, sr=self.sr, hop_length=hop_length)
         
         # 计算频谱质心 (表示声音的"亮度")
         spectral_centroids = librosa.feature.spectral_centroid(
-            y=self.y, sr=self.sr, hop_length=self.hop_length
+            y=y, sr=self.sr, hop_length=hop_length
         )[0]
         
         # 计算频谱对比度 (高频与低频能量比)
         spectral_contrast = librosa.feature.spectral_contrast(
-            y=self.y, sr=self.sr, hop_length=self.hop_length
+            y=y, sr=self.sr, hop_length=hop_length
         )
         
         # 计算色度能量归一化 (更好地表示和弦)
         chroma_cens = librosa.feature.chroma_cens(
-            y=self.y, sr=self.sr, hop_length=self.hop_length
+            y=y, sr=self.sr, hop_length=hop_length
         )
         
         # 存储关键频谱特征
-        self.features["spectral"] = {
+        self.spectral_features = {
             "times": times.tolist(),
             "centroid": spectral_centroids.tolist(),
             "contrast_mean": np.mean(spectral_contrast, axis=1).tolist(),
             "chroma_mean": np.mean(chroma, axis=1).tolist(),
-        }
-        
-        # 存储用于可视化的完整频谱数据
-        # 注意: 这些数据量较大，仅用于可视化
-        self.features["visualization"] = {
             "mel_spec_db": mel_spec_db.tolist(),
             "chroma": chroma.tolist()
         }
     
     def _extract_volume_envelope(self) -> None:
         """提取音量包络"""
+        # 获取当前活跃的音频数据
+        y = self._get_active_audio_data()
+        
         # 计算RMS能量
-        rms = librosa.feature.rms(y=self.y, hop_length=self.hop_length)[0]
+        hop_length = 512  # 使用通用hop_length
+        rms = librosa.feature.rms(y=y, hop_length=hop_length)[0]
         
         # 获取对应的时间轴
-        times = librosa.times_like(rms, sr=self.sr, hop_length=self.hop_length)
+        times = librosa.times_like(rms, sr=self.sr, hop_length=hop_length)
         
         # 平滑RMS曲线 (使用移动平均)
         window_size = 5
@@ -455,7 +561,7 @@ class AudioAnalyzer(QtCore.QObject):
             smoothed_times = times
         
         # 存储音量包络数据
-        self.features["volume"] = {
+        self.volume_envelope = {
             "times": smoothed_times.tolist(),
             "rms": smoothed_rms.tolist()
         }
@@ -472,18 +578,19 @@ class AudioAnalyzer(QtCore.QObject):
             # 转换为时间点
             if len(change_points) > 0:
                 change_times = smoothed_times[change_points].tolist()
-                self.features["volume_changes"] = change_times
+                self.volume_changes = change_times
     
     def _detect_sections_and_transitions(self) -> None:
         """检测音频段落和过渡点"""
-        if "spectral" not in self.features:
-            return
+        # 获取当前活跃的音频数据
+        y = self._get_active_audio_data()
         
         try:
             # 使用谱平面图进行结构分段
             # 首先获得一个自相似矩阵
+            hop_length = 512  # 使用通用hop_length
             mfcc = librosa.feature.mfcc(
-                y=self.y, sr=self.sr, hop_length=self.hop_length, n_mfcc=13
+                y=y, sr=self.sr, hop_length=hop_length, n_mfcc=13
             )
             
             # 标准化MFCC特征
@@ -496,7 +603,7 @@ class AudioAnalyzer(QtCore.QObject):
             
             # 使用光谱聚类检测段落边界
             boundaries = librosa.segment.agglomerative(similarity, 10)
-            boundary_times = librosa.frames_to_time(boundaries, sr=self.sr, hop_length=self.hop_length)
+            boundary_times = librosa.frames_to_time(boundaries, sr=self.sr, hop_length=hop_length)
             
             # 进一步细化边界
             refined_boundaries = []
@@ -509,15 +616,15 @@ class AudioAnalyzer(QtCore.QObject):
                     prev_time = time
             
             # 存储段落边界
-            self.features["sections"] = refined_boundaries
+            self.sections = refined_boundaries
             
             # 检测过渡点（节拍+音量+频谱变化的组合）
             transitions = []
             
             # 如果有检测到节拍和音量变化
-            if "beat_times" in self.features and "volume_changes" in self.features:
-                beat_times = self.features["beat_times"]
-                volume_changes = self.features["volume_changes"]
+            if hasattr(self, 'beat_times') and self.beat_times is not None and hasattr(self, 'volume_changes') and self.volume_changes is not None:
+                beat_times = self.beat_times
+                volume_changes = self.volume_changes
                 
                 # 找出在音量变化附近的节拍点
                 for beat in beat_times:
@@ -539,15 +646,17 @@ class AudioAnalyzer(QtCore.QObject):
                     if t - filtered_transitions[-1] >= min_gap:
                         filtered_transitions.append(t)
                 
-                self.features["transitions"] = filtered_transitions
+                self.transitions = filtered_transitions
         
         except Exception as e:
             # 如果段落检测失败，记录错误但继续执行其他分析
-            self.features["section_detection_error"] = str(e)
+            print(f"段落检测失败: {str(e)}")
+            self.sections = []
+            self.transitions = []
     
     def _create_beat_grid(self) -> None:
         """创建用于osu谱面的节拍网格"""
-        if self.tempo is None or self.beats is None or len(self.beats) == 0:
+        if not hasattr(self, 'tempo') or self.tempo is None or not hasattr(self, 'beat_times') or self.beat_times is None or len(self.beat_times) == 0:
             return
         
         try:
@@ -555,10 +664,10 @@ class AudioAnalyzer(QtCore.QObject):
             beat_interval = 60.0 / self.tempo
             
             # 估计开始偏移
-            offset = self.beats[0]
+            offset = self.beat_times[0]
             
             # 创建一个理想的节拍网格
-            duration = self.features["duration"]
+            duration = len(self._get_active_audio_data()) / self.sr
             num_beats = int(duration / beat_interval) + 1
             ideal_grid = np.arange(num_beats) * beat_interval + offset
             
@@ -566,20 +675,20 @@ class AudioAnalyzer(QtCore.QObject):
             ideal_grid = ideal_grid[ideal_grid < duration]
             
             # 存储节拍网格
-            self.features["beat_grid"] = ideal_grid.tolist()
+            self.beat_grid = ideal_grid.tolist()
             
             # 对每个实际节拍，找到最接近的网格节拍
             grid_mapped_beats = []
-            for beat in self.beats:
+            for beat in self.beat_times:
                 # 找到最接近的网格节拍
                 closest_grid_idx = np.argmin(np.abs(ideal_grid - beat))
                 grid_mapped_beats.append(float(ideal_grid[closest_grid_idx]))
             
             # 存储映射后的节拍
-            self.features["grid_mapped_beats"] = grid_mapped_beats
+            self.grid_mapped_beats = grid_mapped_beats
             
             # 存储节拍网格参数 (用于osu谱面)
-            self.features["osu"] = {
+            self.osu_params = {
                 "bpm": self.tempo,
                 "offset": float(offset * 1000),  # osu用毫秒
                 "beat_divisor": 4,  # 默认4分音符
@@ -588,23 +697,25 @@ class AudioAnalyzer(QtCore.QObject):
         
         except Exception as e:
             # 如果节拍网格创建失败，记录错误但继续执行其他分析
-            self.features["beat_grid_error"] = str(e)
+            print(f"节拍网格创建失败: {str(e)}")
+            self.beat_grid = []
+            self.grid_mapped_beats = []
     
     def get_beat_times(self) -> List[float]:
         """获取节拍时间点列表"""
-        if "beat_times" in self.features:
-            return self.features["beat_times"]
+        if self.beat_times is not None:
+            return self.beat_times.tolist()
         return []
     
     def get_bpm(self) -> float:
         """获取检测到的BPM"""
-        if "bpm" in self.features:
-            return self.features["bpm"]
+        if self.bpm is not None:
+            return self.bpm
         return 0.0
     
     def get_bpm_source(self) -> str:
         """获取BPM的来源"""
-        return self.bpm_source
+        return self.beat_source if hasattr(self, 'beat_source') else self.bpm_source
     
     def set_manual_bpm(self, bpm: float) -> None:
         """
@@ -617,16 +728,13 @@ class AudioAnalyzer(QtCore.QObject):
             bpm_value = float(bpm)
             if bpm_value <= 0:
                 self.analysis_error.emit("BPM必须大于0")
-                return
+                return False
                 
             self.manual_bpm = bpm_value
+            self.bpm = bpm_value
             self.bpm_source = "manual"
+            self.beat_source = "manual"
             
-            # 更新features字典中的BPM
-            if self.features:
-                self.features["bpm"] = bpm_value
-                self.features["bpm_source"] = "manual"
-                
             return True
         except (ValueError, TypeError):
             self.analysis_error.emit(f"无效的BPM值: {bpm}")
@@ -684,12 +792,9 @@ class AudioAnalyzer(QtCore.QObject):
                 
             # 设置BPM
             self.manual_bpm = main_bpm
+            self.bpm = main_bpm
             self.bpm_source = "beatmap"
-            
-            # 更新features字典中的BPM
-            if self.features:
-                self.features["bpm"] = main_bpm
-                self.features["bpm_source"] = "beatmap"
+            self.beat_source = "beatmap"
                 
             return True
         except Exception as e:
@@ -703,10 +808,10 @@ class AudioAnalyzer(QtCore.QObject):
         返回:
             timing points列表，每项包含 (时间点(ms), 毫秒每节拍)
         """
-        if "osu" not in self.features:
+        if not hasattr(self, 'osu_params') or not self.osu_params:
             return []
         
-        osu_data = self.features["osu"]
+        osu_data = self.osu_params
         offset_ms = osu_data["offset"]
         bpm = osu_data["bpm"]
         
@@ -717,8 +822,8 @@ class AudioAnalyzer(QtCore.QObject):
         timing_points = [(offset_ms, ms_per_beat)]
         
         # 如果有段落，为每个段落添加timing point
-        if "sections" in self.features:
-            for section_time in self.features["sections"]:
+        if hasattr(self, 'sections') and self.sections:
+            for section_time in self.sections:
                 # 添加一个继承前一个timing point的新timing point (以负值表示)
                 timing_points.append((section_time * 1000, -100.0))
         
@@ -734,10 +839,10 @@ class AudioAnalyzer(QtCore.QObject):
         返回:
             高能量时间点列表
         """
-        if "volume" not in self.features:
+        if not hasattr(self, 'volume_envelope') or not self.volume_envelope:
             return []
         
-        volume_data = self.features["volume"]
+        volume_data = self.volume_envelope
         times = volume_data["times"]
         rms = volume_data["rms"]
         
@@ -769,31 +874,26 @@ class AudioAnalyzer(QtCore.QObject):
             "slider_velocity": 1.0   # 默认值
         }
         
-        if not self.features:
-            return result
-        
         # 根据BPM调整流串密度
-        if "bpm" in self.features:
-            bpm = self.features["bpm"]
+        if self.bpm is not None:
             # BPM较高时增加流串密度
-            if bpm > 180:
-                result["stream_density"] = min(0.8, 0.5 + (bpm - 180) / 100)
-            elif bpm < 120:
-                result["stream_density"] = max(0.3, 0.5 - (120 - bpm) / 100)
+            if self.bpm > 180:
+                result["stream_density"] = min(0.8, 0.5 + (self.bpm - 180) / 100)
+            elif self.bpm < 120:
+                result["stream_density"] = max(0.3, 0.5 - (120 - self.bpm) / 100)
         
         # 根据频谱质心调整跳跃强度
-        if "spectral" in self.features and "centroid" in self.features["spectral"]:
-            centroids = self.features["spectral"]["centroid"]
+        if self.spectral_features and "centroid" in self.spectral_features:
+            centroids = self.spectral_features["centroid"]
             mean_centroid = np.mean(centroids)
             # 标准化到0-1范围 (假设大多数音频的质心在500-8000Hz之间)
             normalized_centroid = min(1.0, max(0.0, (mean_centroid - 500) / 7500))
             result["jump_intensity"] = normalized_centroid
         
         # 根据节拍规律性调整滑条速度
-        if "beat_regularity" in self.features:
-            regularity = self.features["beat_regularity"]
+        if hasattr(self, 'beat_confidence') and self.beat_confidence is not None:
             # 规律性高的曲目可以有更高的滑条速度
-            result["slider_velocity"] = 1.0 + regularity
+            result["slider_velocity"] = 1.0 + self.beat_confidence
         
         return result
     
@@ -814,22 +914,25 @@ class AudioAnalyzer(QtCore.QObject):
             plt.style.use('dark_background')
             fig = plt.figure(figsize=(10, 4))
             
+            # 获取当前活跃音频源数据
+            y = self._get_active_audio_data()
+            
             if feature_type == "waveform":
                 # 绘制波形图
-                plt.plot(librosa.times_like(self.y, sr=self.sr), self.y, color='#FF66AA')
+                plt.plot(librosa.times_like(y, sr=self.sr), y, color='#FF66AA')
                 plt.title("音频波形", fontsize=14)
                 plt.xlabel("时间 (秒)", fontsize=12)
                 plt.ylabel("振幅", fontsize=12)
                 
                 # 如果有节拍点，在波形上标出
-                if "beat_times" in self.features:
-                    for beat in self.features["beat_times"]:
+                if hasattr(self, 'beat_times') and self.beat_times is not None:
+                    for beat in self.beat_times:
                         plt.axvline(x=beat, color='w', alpha=0.2)
             
             elif feature_type == "mel_spectrogram":
-                if "visualization" in self.features and "mel_spec_db" in self.features["visualization"]:
-                    # 绘制梅尔频谱图
-                    mel_spec_db = np.array(self.features["visualization"]["mel_spec_db"])
+                if self.spectral_features and "mel_spec_db" in self.spectral_features:
+                    # 使用预计算的梅尔频谱图
+                    mel_spec_db = np.array(self.spectral_features["mel_spec_db"])
                     plt.imshow(mel_spec_db, aspect='auto', origin='lower', interpolation='nearest', cmap='magma')
                     plt.colorbar(format='%+2.0f dB')
                     plt.title("梅尔频谱图", fontsize=14)
@@ -837,7 +940,8 @@ class AudioAnalyzer(QtCore.QObject):
                     plt.ylabel("梅尔频率", fontsize=12)
                 else:
                     # 实时计算梅尔频谱
-                    mel_spec = librosa.feature.melspectrogram(y=self.y, sr=self.sr, hop_length=self.hop_length)
+                    hop_length = 512
+                    mel_spec = librosa.feature.melspectrogram(y=y, sr=self.sr, hop_length=hop_length)
                     mel_spec_db = librosa.power_to_db(mel_spec, ref=np.max)
                     plt.imshow(mel_spec_db, aspect='auto', origin='lower', interpolation='nearest', cmap='magma')
                     plt.colorbar(format='%+2.0f dB')
@@ -846,9 +950,9 @@ class AudioAnalyzer(QtCore.QObject):
                     plt.ylabel("梅尔频率", fontsize=12)
             
             elif feature_type == "chroma":
-                if "visualization" in self.features and "chroma" in self.features["visualization"]:
-                    # 绘制色度图
-                    chroma = np.array(self.features["visualization"]["chroma"])
+                if self.spectral_features and "chroma" in self.spectral_features:
+                    # 使用预计算的色度图
+                    chroma = np.array(self.spectral_features["chroma"])
                     plt.imshow(chroma, aspect='auto', origin='lower', interpolation='nearest', cmap='plasma')
                     plt.colorbar()
                     plt.title("色度图", fontsize=14)
@@ -857,7 +961,8 @@ class AudioAnalyzer(QtCore.QObject):
                     plt.yticks(np.arange(12), ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'])
                 else:
                     # 实时计算色度图
-                    chroma = librosa.feature.chroma_stft(y=self.y, sr=self.sr, hop_length=self.hop_length)
+                    hop_length = 512
+                    chroma = librosa.feature.chroma_stft(y=y, sr=self.sr, hop_length=hop_length)
                     plt.imshow(chroma, aspect='auto', origin='lower', interpolation='nearest', cmap='plasma')
                     plt.colorbar()
                     plt.title("色度图", fontsize=14)
@@ -884,22 +989,59 @@ class AudioAnalyzer(QtCore.QObject):
         """
         import json
         
-        if not self.features:
-            self.analysis_error.emit("没有可导出的分析结果")
-            return ""
+        # 构建分析结果字典
+        export_data = {
+            "file_path": self.file_path,
+            "sample_rate": self.sr,
+            "duration": len(self.y) / self.sr if self.y is not None else 0,
+            "active_source": self.active_source,
+            "bpm": self.bpm,
+            "beat_source": self.beat_source,
+            "beat_confidence": self.beat_confidence,
+            "available_sources": list(self.separated_sources.keys()) + ["original"] if self.separated_sources else ["original"]
+        }
+        
+        # 添加其他分析数据
+        if self.beat_times is not None:
+            export_data["beat_times"] = self.beat_times.tolist()
+            
+        if self.beat_strength is not None:
+            export_data["beat_strength"] = self.beat_strength.tolist()
+            
+        if hasattr(self, 'strong_beats') and self.strong_beats:
+            export_data["strong_beats"] = self.strong_beats
+            
+        if self.spectral_features:
+            export_data["spectral"] = self.spectral_features
+            
+        if hasattr(self, 'volume_envelope') and self.volume_envelope:
+            export_data["volume"] = self.volume_envelope
+            
+        if hasattr(self, 'volume_changes') and self.volume_changes:
+            export_data["volume_changes"] = self.volume_changes
+            
+        if hasattr(self, 'sections') and self.sections:
+            export_data["sections"] = self.sections
+            
+        if hasattr(self, 'transitions') and self.transitions:
+            export_data["transitions"] = self.transitions
+            
+        if hasattr(self, 'beat_grid') and self.beat_grid:
+            export_data["beat_grid"] = self.beat_grid
+            
+        if hasattr(self, 'grid_mapped_beats') and self.grid_mapped_beats:
+            export_data["grid_mapped_beats"] = self.grid_mapped_beats
+            
+        if hasattr(self, 'osu_params') and self.osu_params:
+            export_data["osu"] = self.osu_params
         
         if output_path is None:
-            if self.audio_path:
-                output_path = os.path.splitext(self.audio_path)[0] + ".analysis.json"
+            if self.file_path:
+                output_path = os.path.splitext(self.file_path)[0] + ".analysis.json"
             else:
                 output_path = "audio_analysis.json"
         
         try:
-            # 移除大型可视化数据以减小文件大小
-            export_data = self.features.copy()
-            if "visualization" in export_data:
-                del export_data["visualization"]
-            
             with open(output_path, 'w', encoding='utf-8') as f:
                 json.dump(export_data, f, indent=2, ensure_ascii=False)
             
@@ -907,4 +1049,156 @@ class AudioAnalyzer(QtCore.QObject):
         
         except Exception as e:
             self.analysis_error.emit(f"导出分析结果时出错: {str(e)}")
-            return "" 
+            return ""
+    
+    def _get_active_audio_data(self) -> np.ndarray:
+        """
+        获取当前活跃音频源的数据
+        
+        返回:
+            np.ndarray: 活跃音频源的数据
+        """
+        if self.active_source == "original" or self.active_source not in self.separated_sources:
+            return self.y
+        return self.separated_sources[self.active_source]
+        
+    def _load_demucs_model(self) -> None:
+        """加载Demucs模型用于音频源分离"""
+        self.analysis_progress.emit(5)
+        # 使用htdemucs模型，它是Demucs v4的混合变体，效果较好
+        self.demucs_model = get_model("htdemucs")
+        if self.use_gpu and GPU_AVAILABLE:
+            self.demucs_model.to(torch.device("cuda"))
+        else:
+            self.demucs_model.to(torch.device("cpu"))
+    
+    def _separate_audio_sources(self) -> None:
+        """使用Demucs模型分离音频源"""
+        if self.demucs_model is None:
+            self._load_demucs_model()
+        
+        self.analysis_progress.emit(8)
+        
+        # 转换为torch张量并重塑为Demucs期望的格式
+        audio_tensor = torch.tensor(self.y).float()
+        
+        # 检查形状并转换为立体声 [2, samples]
+        if audio_tensor.dim() == 1:  # 单声道 [samples]
+            # 直接转换为立体声 [2, samples]
+            audio_tensor = audio_tensor.unsqueeze(0).repeat(2, 1)  # [2, samples]
+        elif audio_tensor.dim() == 2:
+            if audio_tensor.shape[0] != 2:  # 如果第一维不是2
+                # 确保通道维度是2
+                audio_tensor = audio_tensor.transpose(0, 1) if audio_tensor.shape[1] == 2 else audio_tensor.repeat(2, 1)
+        
+        # 添加批次维度 [1, 2, samples]
+        audio_tensor = audio_tensor.unsqueeze(0)
+        
+        # 移动到正确的设备
+        device = torch.device("cuda" if self.use_gpu and GPU_AVAILABLE else "cpu")
+        audio_tensor = audio_tensor.to(device)
+        
+        # 打印形状用于调试
+        print(f"音频张量形状: {audio_tensor.shape}")
+        
+        # 应用模型 - 使用 apply_model 而不是直接调用模型以获得更好的效率
+        with torch.no_grad():
+            sources = apply_model(self.demucs_model, audio_tensor, device=device)[0]
+        
+        # 从神经网络输出中提取各个源
+        self.separated_sources = {}
+        for source_idx, source_name in enumerate(self.AUDIO_SOURCES):
+            # 转换为numpy数组并取平均值如果是立体声
+            source_np = sources[source_idx].mean(dim=0).cpu().numpy()
+            self.separated_sources[source_name] = source_np
+        
+        self.analysis_progress.emit(15)
+    
+    def _select_active_source(self) -> None:
+        """根据优先级选择活跃音频源"""
+        # 检查优先级列表中的源是否可用
+        for source in self.source_priority:
+            if source in self.separated_sources:
+                self.active_source = source
+                return
+        # 如果没有找到匹配的源，使用原始音频
+        self.active_source = "original"
+    
+    def set_use_source_separation(self, enabled: bool) -> None:
+        """
+        设置是否使用音频源分离
+        
+        参数:
+            enabled: 是否启用音频源分离
+        """
+        self.use_source_separation = enabled
+        
+    def set_source_priority(self, priority_list: List[str]) -> None:
+        """
+        设置音频源优先级
+        
+        参数:
+            priority_list: 音频源优先级列表
+        """
+        # 验证优先级列表
+        valid_sources = set(self.AUDIO_SOURCES + ["original"])
+        for source in priority_list:
+            if source not in valid_sources:
+                self.analysis_error.emit(f"无效的音频源: {source}")
+                return
+        
+        self.source_priority = priority_list
+        
+        # 如果已经有分离的源，重新选择活跃源
+        if self.separated_sources:
+            self._select_active_source()
+            
+    def set_active_source(self, source: str) -> None:
+        """
+        设置当前活跃的音频源
+        
+        参数:
+            source: 音频源名称
+        """
+        if source == "original" or source in self.separated_sources:
+            self.active_source = source
+        else:
+            self.analysis_error.emit(f"无效的音频源: {source}")
+    
+    def get_available_sources(self) -> List[str]:
+        """
+        获取可用的音频源列表
+        
+        返回:
+            List[str]: 可用音频源列表
+        """
+        return list(self.separated_sources.keys()) + ["original"]
+        
+    def export_separated_audio(self, output_dir: str) -> Dict[str, str]:
+        """
+        导出分离后的音频到指定目录
+        
+        参数:
+            output_dir: 输出目录
+            
+        返回:
+            Dict[str, str]: 源名称到输出文件路径的映射
+        """
+        if not self.separated_sources:
+            self.analysis_error.emit("没有分离的音频源可以导出")
+            return {}
+            
+        # 确保输出目录存在
+        os.makedirs(output_dir, exist_ok=True)
+        
+        # 获取原始文件名（不带扩展名）
+        basename = os.path.splitext(os.path.basename(self.file_path))[0]
+        
+        # 导出每个源
+        result = {}
+        for source_name, source_data in self.separated_sources.items():
+            output_path = os.path.join(output_dir, f"{basename}_{source_name}.wav")
+            sf.write(output_path, source_data, self.sr)
+            result[source_name] = output_path
+            
+        return result 

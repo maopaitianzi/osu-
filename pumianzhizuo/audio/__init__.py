@@ -8,4 +8,7 @@
 from .analyzer import AudioAnalyzer
 from .visualizer import AudioVisualizer
 
-__all__ = ["AudioAnalyzer", "AudioVisualizer"] 
+__all__ = [
+    'AudioAnalyzer',
+    'AudioVisualizer'
+] 
