@@ -199,9 +199,9 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
         tab_widget = QtWidgets.QTabWidget()
         main_layout.addWidget(tab_widget)
         
-        # 创建"生成谱面"选项卡
+        # 创建"音频分析"选项卡
         generate_tab = QtWidgets.QWidget()
-        tab_widget.addTab(generate_tab, "生成谱面")
+        tab_widget.addTab(generate_tab, "音频分析")
         
         # 创建"谱面分析"选项卡
         beatmap_analysis_tab = QtWidgets.QWidget()
@@ -398,12 +398,7 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
             pass  # 如果图标不存在，则不设置图标
         self.analyze_btn.clicked.connect(self.analyze_audio)
         
-        generate_btn = QtWidgets.QPushButton("生成谱面")
-        try:
-            generate_btn.setIcon(QtGui.QIcon("gui/resources/generate_icon.png"))
-        except:
-            pass  # 如果图标不存在，则不设置图标
-        generate_btn.clicked.connect(self.generate_beatmap)
+        # 删除生成谱面按钮
         
         preview_btn = QtWidgets.QPushButton("预览谱面")
         try:
@@ -434,7 +429,6 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
         # 添加到布局
         actions_layout.addWidget(self.progress_bar, 3)
         actions_layout.addWidget(self.analyze_btn, 1)
-        actions_layout.addWidget(generate_btn, 1)
         actions_layout.addWidget(preview_btn, 1)
         actions_layout.addWidget(export_btn, 1)
         
@@ -1460,6 +1454,9 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
         # 更新UI状态
         self.progress_bar.setValue(100)
         
+        # 保存features到audio_analyzer对象中，以便export_analysis使用
+        self.audio_analyzer.features = features
+        
         # 获取基本音频信息
         bpm = features.get("bpm", 0)
         bpm_source = features.get("beat_source", "default")
@@ -1498,7 +1495,7 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
             # 创建分离音频子目录
             output_dir = os.path.join(output_dir, "separated_audio")
             
-            # 导出分离的音频
+            # 导出分离的音频和分析数据
             exported_files = self.audio_analyzer.export_separated_audio(output_dir)
             
             if exported_files:
@@ -1513,17 +1510,23 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
                 # 显示导出成功信息，使用更友好的描述
                 export_paths = []
                 for k, v in exported_files.items():
+                    # 获取音频和分析数据的路径
+                    audio_path = v.get("audio", "")
+                    analysis_path = v.get("analysis", "")
+                    
                     # 使用更友好的描述而不是代码中的键名
                     source_desc = source_descriptions.get(k, k)
-                    filename = os.path.basename(v)
-                    export_paths.append(f"{source_desc}: {filename}")
+                    audio_filename = os.path.basename(audio_path) if audio_path else "未导出"
+                    analysis_filename = os.path.basename(analysis_path) if analysis_path else "未导出"
+                    
+                    export_paths.append(f"{source_desc}:\n   音频: {audio_filename}\n   分析: {analysis_filename}")
                 
                 # 拼接成文本
                 export_info = "\n".join(export_paths)
                 
                 QtWidgets.QMessageBox.information(
                     self, "导出成功", 
-                    f"分离的音频已导出到:\n{output_dir}\n\n{export_info}"
+                    f"分离的音频和分析数据已导出到:\n{output_dir}\n\n{export_info}"
                 )
         
         # 仅当可视化功能启用时才更新可视化器
@@ -1554,76 +1557,19 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
     
     def handle_analysis_error(self, error_message):
         """处理分析错误"""
-        # 结束分析线程
-        if hasattr(self, 'analysis_thread') and self.analysis_thread.isRunning():
-            self.analysis_thread.quit()
-            self.analysis_thread.wait()
-        
-        # 更新UI状态
+        self.status_label.setText("分析失败: " + error_message)
         self.progress_bar.setValue(0)
-        self.status_label.setText("分析失败")
-        
-        # 显示错误消息
-        QtWidgets.QMessageBox.critical(
-            self, "分析错误", 
-            f"音频分析过程中出错：\n{error_message}"
-        )
+        QtWidgets.QMessageBox.critical(self, "错误", "音频分析失败：\n" + error_message)
     
     def generate_beatmap(self):
-        """生成谱面"""
-        file_path = self.file_path.text()
-        if not file_path or not os.path.exists(file_path):
-            QtWidgets.QMessageBox.warning(self, "警告", "请先选择有效的音频文件")
-            return
-        
-        # 这里实际上会调用谱面生成模块生成谱面
-        # 为了演示，我们模拟一个进度条
-        self.status_label.setText("生成谱面中...")
-        self.progress_bar.setValue(0)
-        
-        for i in range(101):
-            QtCore.QCoreApplication.processEvents()
-            self.progress_bar.setValue(i)
-            QtCore.QThread.msleep(30)
-        
-        self.status_label.setText("谱面生成完成！")
-        # 注释掉提示框，避免打断批量处理
-        # QtWidgets.QMessageBox.information(
-        #     self, "成功", 
-        #     "谱面生成完成！\n已保存至：" + os.path.splitext(file_path)[0] + ".osu"
-        # )
+        """生成谱面 - 已禁用"""
+        QtWidgets.QMessageBox.information(self, "提示", "谱面生成功能已移除")
+        return
     
     def preview_beatmap(self):
         """预览谱面"""
-        # 检查是否已经加载了音频
-        if not hasattr(self.audio_analyzer, 'y') or self.audio_analyzer.y is None:
-            QtWidgets.QMessageBox.warning(self, "警告", "请先分析音频文件")
-            return
-        
-        # 切换到预览选项卡
-        tab_widget = self.centralWidget().findChild(QtWidgets.QTabWidget)
-        tab_widget.setCurrentIndex(1)
-        
-        # 这里实际上会调用谱面预览模块显示谱面
-        self.status_label.setText("谱面预览模式")
-        
-        # 仅当可视化功能启用时才更新可视化器
-        if self.enable_visualization_cb.isChecked():
-            # 确保可视化器已经设置了音频数据
-            if self.audio_visualizer.audio_data is None:
-                self.audio_visualizer.set_audio_data(self.audio_analyzer.y, self.audio_analyzer.sr)
-            
-            # 如果有分析结果，也设置给可视化器
-            if self.audio_analyzer.features:
-                self.audio_visualizer.set_audio_features(self.audio_analyzer.features)
-            
-            # 切换到波形图视图，并确保显示节拍
-            self.audio_visualizer.waveform_btn.setChecked(True)
-            self.audio_visualizer.show_beats_cb.setChecked(True)
-            self.audio_visualizer.update_visualization()
-        else:
-            # 提示用户可视化功能已禁用
-            self.status_label.setText("谱面预览模式 (可视化已禁用)")
+        QtWidgets.QMessageBox.information(self, "提示", "谱面生成功能已移除")
+        return
     
     def export_analysis(self):
         """导出音频分析结果"""
@@ -1731,25 +1677,6 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
             self.progress_bar.setValue(100)
             self.status_label.setText(f"分析结果已导出至: {os.path.basename(output_path)}")
             
-            # 注释掉提示框，避免打断后续操作
-            # QtWidgets.QMessageBox.information(
-            #     self, "导出成功", 
-            #     f"音频分析结果已成功导出至:\n{output_path}"
-            # )
-            
-            # 注释掉询问是否打开所在文件夹的代码，避免打断后续操作
-            # reply = QtWidgets.QMessageBox.question(
-            #     self, "打开文件夹", 
-            #     "是否要打开导出文件所在的文件夹?",
-            #     QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
-            #     QtWidgets.QMessageBox.No
-            # )
-            
-            # if reply == QtWidgets.QMessageBox.Yes:
-            #     # 打开文件所在文件夹
-            #     folder_path = os.path.dirname(output_path)
-            #     os.startfile(folder_path) if os.name == 'nt' else os.system(f'xdg-open "{folder_path}"')
-                
         except Exception as e:
             # 显示错误消息
             self.progress_bar.setValue(0)

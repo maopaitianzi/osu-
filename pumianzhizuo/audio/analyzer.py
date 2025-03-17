@@ -10,10 +10,12 @@ import numpy as np
 import librosa
 import librosa.display
 import soundfile as sf
-from typing import Dict, List, Tuple, Optional, Union
+from typing import Dict, List, Tuple, Optional, Union, Any
 import matplotlib.pyplot as plt
 from matplotlib.figure import Figure
 from PyQt5 import QtCore
+import json
+import datetime
 
 # 导入scipy模块
 import scipy.signal
@@ -24,6 +26,8 @@ scipy.signal.hann = windows.hann
 
 # 添加GPU加速相关导入
 import torch
+import torch.nn as nn
+import torch.nn.functional as F
 
 # 导入人声分离相关库
 from demucs.pretrained import get_model
@@ -50,6 +54,21 @@ try:
 except ImportError:
     SCNETXL_AVAILABLE = False
 
+# 自定义JSON编码器，处理numpy数组和其他不可序列化的对象
+class NumpyEncoder(json.JSONEncoder):
+    """处理Numpy数组的JSON编码器"""
+    def default(self, obj):
+        if isinstance(obj, np.ndarray):
+            return obj.tolist()
+        if isinstance(obj, np.integer):
+            return int(obj)
+        if isinstance(obj, np.floating):
+            return float(obj)
+        if isinstance(obj, np.bool_):
+            return bool(obj)
+        if isinstance(obj, (np.complex, np.complex64, np.complex128)):
+            return {"real": obj.real, "imag": obj.imag}
+        return super().default(obj)
 
 class AudioAnalyzer(QtCore.QObject):
     """
@@ -1440,7 +1459,7 @@ class AudioAnalyzer(QtCore.QObject):
         
     def export_separated_audio(self, output_dir: str) -> Dict[str, str]:
         """
-        导出分离后的音频到指定目录
+        导出分离后的音频到指定目录，并为每个音频源生成分析数据
         
         参数:
             output_dir: 输出目录
@@ -1467,7 +1486,7 @@ class AudioAnalyzer(QtCore.QObject):
         }
         
         # 打印调试信息
-        print("导出分离音频文件:")
+        print("导出分离音频文件和分析数据:")
         for source_name in self.separated_sources.keys():
             print(f"  - {source_name}: {source_display_names.get(source_name, source_name)}")
         
@@ -1482,6 +1501,12 @@ class AudioAnalyzer(QtCore.QObject):
             "other": "其他乐器内容"
         }
         
+        # 保存当前活跃音频源
+        original_active_source = self.active_source
+        original_data = None
+        if hasattr(self, 'features'):
+            original_data = self.features.copy()
+        
         # 导出每个源并在结果字典中使用正确的显示名称作为键
         for source_name, source_data in self.separated_sources.items():
             # 获取更具描述性的名称
@@ -1494,10 +1519,56 @@ class AudioAnalyzer(QtCore.QObject):
             # 写入音频文件
             sf.write(output_path, source_data, self.sr)
             
-            # 在结果字典中使用实际内容名作为键 - 这确保UI中显示的是正确的内容描述
-            result[source_name] = output_path
+            # 对每个分离的音频源进行分析并导出分析数据
+            self.set_active_source(source_name)
+            
+            # 为当前源执行分析（复用分析功能但不触发信号）
+            temp_y = self._get_active_audio_data()
+            
+            # 创建一个临时的音频数据，避免干扰原始分析结果
+            temp_features = {}
+            
+            # 提取基本特征
+            self._detect_tempo_and_beats()
+            self._extract_beat_strength()
+            self._extract_spectral_features()
+            self._extract_volume_envelope()
+            self._detect_sections_and_transitions()
+            self._create_beat_grid()
+            
+            # 复制必要的分析结果到临时字典
+            for key in ["bpm", "beat_times", "beat_frames", "beat_strengths", 
+                        "spectral_contrast", "spectral_bandwidth", "spectral_rolloff",
+                        "mfcc", "volume_envelope", "sections", "transitions", 
+                        "beat_grid", "energy_points", "active_source"]:
+                if hasattr(self, key):
+                    temp_features[key] = getattr(self, key)
+            
+            # 创建分析数据输出文件名
+            analysis_filename = f"{basename}_{display_name}_analysis.json"
+            analysis_path = os.path.join(output_dir, analysis_filename)
+            
+            # 将分析数据保存为JSON文件
+            with open(analysis_path, 'w', encoding='utf-8') as f:
+                # 添加元数据
+                temp_features["source_type"] = source_name
+                temp_features["display_name"] = display_name
+                temp_features["analysis_time"] = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                
+                json.dump(temp_features, f, cls=NumpyEncoder, ensure_ascii=False, indent=2)
+            
+            # 记录文件路径
+            result[source_name] = {
+                "audio": output_path,
+                "analysis": analysis_path
+            }
             
             # 打印详细的导出信息用于调试
-            print(f"导出 {source_name} 到 {output_filename} (实际内容: {actual_content_map.get(source_name, '未知')})")
+            print(f"导出 {source_name} 到 {output_filename} 和 {analysis_filename}")
+        
+        # 恢复原始活跃源和特征
+        self.set_active_source(original_active_source)
+        if original_data:
+            self.features = original_data
             
         return result 
