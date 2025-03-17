@@ -1665,16 +1665,6 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
         # 根据分析结果预设谱面参数
         density_suggestions = self.audio_analyzer.get_density_suggestion()
         
-        # 更新流串密度滑块
-        if "stream_density" in density_suggestions:
-            density = int(density_suggestions["stream_density"] * 100)
-            self.stream_density_slider.setValue(density)
-        
-        # 更新跳跃强度滑块
-        if "jump_intensity" in density_suggestions:
-            intensity = int(density_suggestions["jump_intensity"] * 100)
-            self.jump_intensity_slider.setValue(intensity)
-        
         # 检查是否需要自动导出
         if self.auto_export_cb.isChecked():
             self.export_analysis()
