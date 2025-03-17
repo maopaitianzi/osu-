@@ -16,6 +16,7 @@ from matplotlib.figure import Figure
 from PyQt5 import QtCore
 import json
 import datetime
+import copy
 
 # 导入scipy模块
 import scipy.signal
@@ -57,18 +58,33 @@ except ImportError:
 # 自定义JSON编码器，处理numpy数组和其他不可序列化的对象
 class NumpyEncoder(json.JSONEncoder):
     """处理Numpy数组的JSON编码器"""
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # 用于检测循环引用
+        self.seen = set()
+        
     def default(self, obj):
-        if isinstance(obj, np.ndarray):
-            return obj.tolist()
-        if isinstance(obj, np.integer):
-            return int(obj)
-        if isinstance(obj, np.floating):
-            return float(obj)
-        if isinstance(obj, np.bool_):
-            return bool(obj)
-        if isinstance(obj, (np.complex, np.complex64, np.complex128)):
-            return {"real": obj.real, "imag": obj.imag}
-        return super().default(obj)
+        # 检测循环引用
+        obj_id = id(obj)
+        if obj_id in self.seen:
+            return "<circular reference detected>"
+        self.seen.add(obj_id)
+        
+        try:
+            if isinstance(obj, np.ndarray):
+                return obj.tolist()
+            if isinstance(obj, np.integer):
+                return int(obj)
+            if isinstance(obj, np.floating):
+                return float(obj)
+            if isinstance(obj, np.bool_):
+                return bool(obj)
+            if isinstance(obj, (np.complex, np.complex64, np.complex128)):
+                return {"real": obj.real, "imag": obj.imag}
+            return super().default(obj)
+        finally:
+            # 完成对当前对象的处理后，从seen集合中移除
+            self.seen.remove(obj_id)
 
 class AudioAnalyzer(QtCore.QObject):
     """
@@ -261,72 +277,106 @@ class AudioAnalyzer(QtCore.QObject):
                 # 回退到使用原始音频
                 self.active_source = "original"
         
-        # 确保我们使用正确的音频数据进行分析
-        analysis_data = self._get_active_audio_data()
+        # 分析所有音频源（包括原始音频和分离的源）
+        all_results = {}
+        sources_to_analyze = []
+        
+        # 添加所有需要分析的源
+        if self.separated_sources:
+            sources_to_analyze = list(self.separated_sources.keys())
+        sources_to_analyze.append("original")
+        
+        # 记住原始活跃源
+        original_active_source = self.active_source
+        
+        # 发出起始进度信号
+        self.analysis_progress.emit(0)
+        
+        # 依次分析每个源
+        total_sources = len(sources_to_analyze)
+        for i, source_name in enumerate(sources_to_analyze):
+            # 更新状态
+            progress_base = int((i / total_sources) * 100)
+            self.analysis_progress.emit(progress_base)
             
-        try:
-            # 发出起始进度信号
-            self.analysis_progress.emit(0)
+            # 设置当前活跃源
+            self.set_active_source(source_name)
             
-            # 初始化结果字典
-            result = {
-                "file_path": self.file_path,
-                "sample_rate": self.sr,
-                "duration": len(analysis_data) / self.sr,
-                "active_source": self.active_source
-            }
+            # 获取当前源的音频数据
+            analysis_data = self._get_active_audio_data()
             
-            # 检测BPM和节拍
-            self._detect_tempo_and_beats()
-            self.analysis_progress.emit(20)
+            try:
+                # 初始化结果字典
+                result = {
+                    "file_path": self.file_path,
+                    "sample_rate": self.sr,
+                    "duration": len(analysis_data) / self.sr,
+                    "active_source": source_name
+                }
+                
+                # 检测BPM和节拍
+                self._detect_tempo_and_beats()
+                self.analysis_progress.emit(progress_base + int((1/total_sources) * 20))
+                
+                # 提取节拍强度
+                self._extract_beat_strength()
+                self.analysis_progress.emit(progress_base + int((1/total_sources) * 30))
+                
+                # 提取频谱特征
+                self._extract_spectral_features()
+                self.analysis_progress.emit(progress_base + int((1/total_sources) * 50))
+                
+                # 提取音量包络
+                self._extract_volume_envelope()
+                self.analysis_progress.emit(progress_base + int((1/total_sources) * 60))
+                
+                # 检测段落和过渡点
+                self._detect_sections_and_transitions()
+                self.analysis_progress.emit(progress_base + int((1/total_sources) * 80))
+                
+                # 创建节拍网格
+                self._create_beat_grid()
+                self.analysis_progress.emit(progress_base + int((1/total_sources) * 90))
+                
+                # 更新结果字典，添加分析结果
+                result.update({
+                    "bpm": self.bpm,
+                    "beat_source": self.beat_source,
+                    "beat_times": self.beat_times.tolist() if self.beat_times is not None else None,
+                    "beat_strength": self.beat_strength.tolist() if self.beat_strength is not None else None,
+                    "beat_confidence": self.beat_confidence,
+                    "spectral_features": self.spectral_features,
+                    "volume_envelope": self.volume_envelope if hasattr(self, 'volume_envelope') else None,
+                    "volume_changes": self.volume_changes if hasattr(self, 'volume_changes') else None,
+                    "sections": self.sections if hasattr(self, 'sections') else None,
+                    "transitions": self.transitions if hasattr(self, 'transitions') else None,
+                    "beat_grid": self.beat_grid if hasattr(self, 'beat_grid') else None,
+                    "grid_mapped_beats": self.grid_mapped_beats if hasattr(self, 'grid_mapped_beats') else None,
+                    "osu_params": self.osu_params if hasattr(self, 'osu_params') else None,
+                })
+                
+                # 保存到所有结果中
+                all_results[source_name] = result
+                
+            except Exception as e:
+                self.analysis_error.emit(f"分析音频源 {source_name} 过程中发生错误: {str(e)}")
+                # 继续分析下一个源
+        
+        # 恢复原始活跃源
+        self.set_active_source(original_active_source)
+        
+        # 创建最终结果 - 使用当前活跃源的分析结果作为基础
+        active_source_result = all_results.get(original_active_source, {}).copy()
+        
+        # 添加所有源的分析和可用源信息（避免循环引用）
+        active_source_result["all_sources_analysis"] = all_results
+        active_source_result["available_sources"] = list(self.separated_sources.keys()) + ["original"] if self.separated_sources else ["original"]
             
-            # 提取节拍强度
-            self._extract_beat_strength()
-            self.analysis_progress.emit(30)
-            
-            # 提取频谱特征
-            self._extract_spectral_features()
-            self.analysis_progress.emit(50)
-            
-            # 提取音量包络
-            self._extract_volume_envelope()
-            self.analysis_progress.emit(60)
-            
-            # 检测段落和过渡点
-            self._detect_sections_and_transitions()
-            self.analysis_progress.emit(80)
-            
-            # 创建节拍网格
-            self._create_beat_grid()
-            self.analysis_progress.emit(90)
-            
-            # 更新结果字典，添加分析结果
-            result.update({
-                "bpm": self.bpm,
-                "beat_source": self.beat_source,
-                "beat_times": self.beat_times.tolist() if self.beat_times is not None else None,
-                "beat_strength": self.beat_strength.tolist() if self.beat_strength is not None else None,
-                "beat_confidence": self.beat_confidence,
-                "spectral_features": self.spectral_features,
-                "volume_envelope": self.volume_envelope if hasattr(self, 'volume_envelope') else None,
-                "volume_changes": self.volume_changes if hasattr(self, 'volume_changes') else None,
-                "sections": self.sections if hasattr(self, 'sections') else None,
-                "transitions": self.transitions if hasattr(self, 'transitions') else None,
-                "beat_grid": self.beat_grid if hasattr(self, 'beat_grid') else None,
-                "grid_mapped_beats": self.grid_mapped_beats if hasattr(self, 'grid_mapped_beats') else None,
-                "osu_params": self.osu_params if hasattr(self, 'osu_params') else None,
-                "available_sources": list(self.separated_sources.keys()) + ["original"] if self.separated_sources else ["original"]
-            })
-            
-            # 发出完成信号
-            self.analysis_progress.emit(100)
-            self.analysis_complete.emit(result)
-            
-            return result
-            
-        except Exception as e:
-            self.analysis_error.emit(f"音频分析过程中发生错误: {str(e)}")
-            return {}
+        # 发出完成信号
+        self.analysis_progress.emit(100)
+        self.analysis_complete.emit(active_source_result)
+        
+        return active_source_result
     
     def _to_gpu(self, data):
         """将数据转移到GPU上（如果启用了GPU加速）"""
@@ -1047,9 +1097,14 @@ class AudioAnalyzer(QtCore.QObject):
             output_path: 输出文件路径，如果为None，则使用音频文件路径+.analysis.json
             
         返回:
-            保存的文件路径
+            保存的文件路径，如果导出多个文件，则返回主文件路径
         """
         import json
+        
+        # 检查是否有all_sources_analysis
+        if hasattr(self, 'features') and 'all_sources_analysis' in self.features:
+            # 导出所有音频源的分析结果
+            return self._export_all_sources_analysis(output_path)
         
         # 构建分析结果字典
         export_data = {
@@ -1111,6 +1166,100 @@ class AudioAnalyzer(QtCore.QObject):
         
         except Exception as e:
             self.analysis_error.emit(f"导出分析结果时出错: {str(e)}")
+            return ""
+
+    def _export_all_sources_analysis(self, output_path: Optional[str] = None) -> str:
+        """
+        导出所有音频源的分析结果
+        
+        参数:
+            output_path: 输出文件路径根目录，如果为None，则使用音频文件路径目录
+            
+        返回:
+            主文件路径（包含所有结果的索引文件）
+        """
+        import json
+        
+        # 确定输出目录和基本文件名
+        if output_path is None:
+            if self.file_path:
+                base_dir = os.path.dirname(self.file_path)
+                base_name = os.path.splitext(os.path.basename(self.file_path))[0]
+            else:
+                base_dir = "."
+                base_name = "audio_analysis"
+        else:
+            base_dir = os.path.dirname(output_path)
+            base_name = os.path.splitext(os.path.basename(output_path))[0]
+        
+        # 确保输出目录存在
+        os.makedirs(base_dir, exist_ok=True)
+        
+        # 音频源类型的人类可读名称
+        source_display_names = {
+            "vocals": "人声(vocals)",
+            "drums": "鼓声(drums)",
+            "bass": "贝斯(bass)",
+            "other": "其他乐器(other)",
+            "original": "原始音频(original)"
+        }
+        
+        # 构建导出文件路径映射
+        source_files = {}
+        all_results = self.features.get('all_sources_analysis', {})
+        
+        for source_name, source_data in all_results.items():
+            # 获取更具描述性的名称
+            display_name = source_display_names.get(source_name, source_name)
+            
+            # 构建源分析文件路径
+            source_filename = f"{base_name}_{display_name}_analysis.json"
+            source_path = os.path.join(base_dir, source_filename)
+            
+            # 创建干净的副本，移除可能导致循环引用的字段
+            clean_data = copy.deepcopy(source_data)
+            
+            # 移除可能导致循环引用的字段
+            if "all_sources_analysis" in clean_data:
+                del clean_data["all_sources_analysis"]
+            
+            # 保存源分析数据
+            try:
+                with open(source_path, 'w', encoding='utf-8') as f:
+                    json.dump(clean_data, f, indent=2, ensure_ascii=False)
+                
+                # 记录文件路径
+                source_files[source_name] = {
+                    "display_name": display_name,
+                    "file_path": os.path.relpath(source_path, base_dir)
+                }
+                
+                print(f"已导出 {source_name} 的分析结果到 {source_filename}")
+                
+            except Exception as e:
+                self.analysis_error.emit(f"导出 {source_name} 分析结果时出错: {str(e)}")
+        
+        # 创建包含所有源索引的主文件
+        main_data = {
+            "file_path": self.file_path,
+            "analysis_time": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "active_source": self.active_source,
+            "available_sources": list(self.separated_sources.keys()) + ["original"] if self.separated_sources else ["original"],
+            "source_files": source_files
+        }
+        
+        # 主索引文件路径
+        main_file_path = os.path.join(base_dir, f"{base_name}_all_sources_analysis.json")
+        
+        try:
+            with open(main_file_path, 'w', encoding='utf-8') as f:
+                json.dump(main_data, f, indent=2, ensure_ascii=False)
+            
+            print(f"已导出所有源的分析索引到 {main_file_path}")
+            return main_file_path
+            
+        except Exception as e:
+            self.analysis_error.emit(f"导出分析索引文件时出错: {str(e)}")
             return ""
     
     def _get_active_audio_data(self) -> np.ndarray:
@@ -1503,9 +1652,14 @@ class AudioAnalyzer(QtCore.QObject):
         
         # 保存当前活跃音频源
         original_active_source = self.active_source
-        original_data = None
+        original_features = {}
+        # 安全地复制features，避免循环引用
         if hasattr(self, 'features'):
-            original_data = self.features.copy()
+            # 如果features包含all_sources_analysis，移除它以避免循环引用
+            if isinstance(self.features, dict) and 'all_sources_analysis' in self.features:
+                original_features = {k: v for k, v in self.features.items() if k != 'all_sources_analysis'}
+            else:
+                original_features = self.features.copy()
         
         # 导出每个源并在结果字典中使用正确的显示名称作为键
         for source_name, source_data in self.separated_sources.items():
@@ -1549,26 +1703,31 @@ class AudioAnalyzer(QtCore.QObject):
             analysis_path = os.path.join(output_dir, analysis_filename)
             
             # 将分析数据保存为JSON文件
-            with open(analysis_path, 'w', encoding='utf-8') as f:
-                # 添加元数据
-                temp_features["source_type"] = source_name
-                temp_features["display_name"] = display_name
-                temp_features["analysis_time"] = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            try:
+                with open(analysis_path, 'w', encoding='utf-8') as f:
+                    # 添加元数据
+                    temp_features["source_type"] = source_name
+                    temp_features["display_name"] = display_name
+                    temp_features["analysis_time"] = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    
+                    json.dump(temp_features, f, cls=NumpyEncoder, ensure_ascii=False, indent=2)
                 
-                json.dump(temp_features, f, cls=NumpyEncoder, ensure_ascii=False, indent=2)
-            
-            # 记录文件路径
-            result[source_name] = {
-                "audio": output_path,
-                "analysis": analysis_path
-            }
-            
-            # 打印详细的导出信息用于调试
-            print(f"导出 {source_name} 到 {output_filename} 和 {analysis_filename}")
+                # 记录文件路径
+                result[source_name] = {
+                    "audio": output_path,
+                    "analysis": analysis_path
+                }
+                
+                # 打印详细的导出信息用于调试
+                print(f"导出 {source_name} 到 {output_filename} 和 {analysis_filename}")
+            except Exception as e:
+                self.analysis_error.emit(f"导出 {source_name} 分析数据时出错: {str(e)}")
         
         # 恢复原始活跃源和特征
         self.set_active_source(original_active_source)
-        if original_data:
-            self.features = original_data
-            
+        if original_features:
+            # 恢复时避免将features直接设置为可能有循环引用的对象
+            if hasattr(self, 'features'):
+                self.features = original_features
+        
         return result 

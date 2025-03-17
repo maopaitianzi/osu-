@@ -1443,6 +1443,10 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
             self.status_label.setText("正在检测音频段落...")
         else:
             self.status_label.setText("正在完成分析...")
+            
+        # 如果启用了音频源分离，显示正在分析所有音频源
+        if hasattr(self, 'enable_source_separation_cb') and self.enable_source_separation_cb.isChecked():
+            self.status_label.setText(f"{self.status_label.text()} (正在分析所有音频源: {progress}%)")
     
     def handle_analysis_complete(self, features):
         """处理分析完成"""
@@ -1480,9 +1484,18 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
         }
         source_text = source_display.get(active_source, active_source)
         
-        self.status_label.setText(
-            f"音频分析完成! BPM: {bpm} ({source}), 节拍数: {beat_count}, 活跃源: {source_text}"
-        )
+        base_status = f"音频分析完成! BPM: {bpm} ({source}), 节拍数: {beat_count}, 活跃源: {source_text}"
+        
+        # 检查是否分析了所有源
+        if 'all_sources_analysis' in features:
+            analyzed_sources = list(features['all_sources_analysis'].keys())
+            if len(analyzed_sources) > 1:
+                source_names = [source_display.get(s, s) for s in analyzed_sources]
+                self.status_label.setText(f"{base_status} | 已分析所有音频源: {', '.join(source_names)}")
+            else:
+                self.status_label.setText(base_status)
+        else:
+            self.status_label.setText(base_status)
         
         # 如果开启了分离音频导出
         if hasattr(self, 'export_separated_audio_cb') and self.export_separated_audio_cb.isChecked() and hasattr(self.audio_analyzer, 'separated_sources') and self.audio_analyzer.separated_sources:
@@ -1573,120 +1586,52 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
     
     def export_analysis(self):
         """导出音频分析结果"""
-        # 检查是否已经进行了分析
-        if not hasattr(self.audio_analyzer, 'features') or not self.audio_analyzer.features:
-            QtWidgets.QMessageBox.warning(self, "警告", "请先分析音频文件")
+        # 检查是否有分析结果
+        if not hasattr(self, 'audio_analyzer') or not hasattr(self.audio_analyzer, 'features'):
+            QtWidgets.QMessageBox.warning(self, "导出错误", "没有可用的分析结果。请先分析音频。")
             return
         
-        # 确定默认保存路径
-        if self.output_path.text():
-            # 如果设置了输出目录，使用该目录
-            default_dir = self.output_path.text()
-            audio_filepath = self.file_path.text() if self.file_path.text() else ""
-            audio_filename = os.path.basename(audio_filepath)
-            
-            # 获取音频文件所在目录名称作为前缀，确保文件名唯一
-            parent_dir_name = "unknown"
-            if audio_filepath:
-                parent_dir = os.path.dirname(audio_filepath)
-                if parent_dir:
-                    parent_dir_name = os.path.basename(parent_dir)
-            
-            # 添加时间戳确保唯一性
-            import datetime
-            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-            
-            # 构建基础文件名
-            base_filename = os.path.splitext(audio_filename)[0]
-            unique_filename = f"{parent_dir_name}_{base_filename}_{timestamp}"
-            
-            default_path = os.path.join(default_dir, f"{unique_filename}.analysis.json")
-        else:
-            # 否则使用音频文件所在目录
-            audio_filepath = self.file_path.text() if self.file_path.text() else ""
-            if audio_filepath:
-                # 获取音频文件所在目录名称
-                parent_dir = os.path.dirname(audio_filepath)
-                parent_dir_name = os.path.basename(parent_dir) if parent_dir else "unknown"
-                
-                # 添加时间戳确保唯一性
-                import datetime
-                timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-                
-                # 构建基础文件名
-                base_filename = os.path.splitext(os.path.basename(audio_filepath))[0]
-                unique_filename = f"{parent_dir_name}_{base_filename}_{timestamp}"
-                
-                default_path = os.path.join(os.path.dirname(audio_filepath), f"{unique_filename}.analysis.json")
-            else:
-                default_path = ""
+        # 获取输出目录
+        output_dir = self.output_path.text()
+        if not output_dir:
+            # 使用原始音频文件所在目录
+            output_dir = os.path.dirname(self.file_path.text()) if self.file_path.text() else "."
         
+        # 获取基本文件名（不含扩展名）
+        base_name = os.path.splitext(os.path.basename(self.file_path.text()))[0] if self.file_path.text() else "analysis"
+        
+        # 显示保存对话框
         file_path, _ = QtWidgets.QFileDialog.getSaveFileName(
-            self, "保存分析结果", default_path, "JSON文件 (*.json)"
+            self, "导出分析结果", 
+            os.path.join(output_dir, f"{base_name}_analysis.json"),
+            "JSON文件 (*.json);;所有文件 (*.*)"
         )
         
         if not file_path:
-            return  # 用户取消了保存
+            return
         
-        # 显示保存进度
-        self.status_label.setText("正在导出分析结果...")
-        self.progress_bar.setValue(50)
-        QtCore.QCoreApplication.processEvents()
-        
-        try:
-            # 根据设置过滤要导出的数据
-            export_data = self.audio_analyzer.features.copy()
+        # 检查是否分析了所有源
+        if hasattr(self.audio_analyzer, 'features') and 'all_sources_analysis' in self.audio_analyzer.features:
+            # 使用新的导出方法导出所有源的分析结果
+            output_path = self.audio_analyzer.export_analysis_to_json(file_path)
             
-            # 如果不导出可视化数据
-            if not self.export_visualization_cb.isChecked() and "visualization" in export_data:
-                del export_data["visualization"]
+            if output_path:
+                # 所有源的分析结果以及单独文件都已导出
+                QtWidgets.QMessageBox.information(
+                    self, "导出成功", 
+                    f"所有音频源的分析结果已导出到:\n{os.path.dirname(output_path)}\n\n"
+                    f"主索引文件: {os.path.basename(output_path)}"
+                )
+        else:
+            # 使用原有方法导出单个活跃源的分析结果
+            output_path = self.audio_analyzer.export_analysis_to_json(file_path)
             
-            # 过滤其他选项
-            if not self.export_bpm_cb.isChecked():
-                keys_to_remove = ["bpm", "beat_times", "beat_strengths", "beat_regularity", 
-                                 "strong_beats", "beat_grid", "grid_mapped_beats", "osu"]
-                for key in keys_to_remove:
-                    if key in export_data:
-                        del export_data[key]
-            
-            if not self.export_spectrum_cb.isChecked() and "spectral" in export_data:
-                del export_data["spectral"]
-            
-            if not self.export_volume_cb.isChecked() and "volume" in export_data:
-                del export_data["volume"]
-                if "volume_changes" in export_data:
-                    del export_data["volume_changes"]
-            
-            if not self.export_sections_cb.isChecked():
-                if "sections" in export_data:
-                    del export_data["sections"]
-                if "transitions" in export_data:
-                    del export_data["transitions"]
-            
-            # 确定JSON格式
-            indent = 2 if self.json_pretty_rb.isChecked() else None
-            
-            # 自定义导出，而不是使用内置方法
-            with open(file_path, 'w', encoding='utf-8') as f:
-                import json
-                json.dump(export_data, f, indent=indent, ensure_ascii=False)
-            
-            output_path = file_path
-            
-            # 更新UI状态
-            self.progress_bar.setValue(100)
-            self.status_label.setText(f"分析结果已导出至: {os.path.basename(output_path)}")
-            
-        except Exception as e:
-            # 显示错误消息
-            self.progress_bar.setValue(0)
-            self.status_label.setText("导出失败")
-            
-            QtWidgets.QMessageBox.critical(
-                self, "导出错误", 
-                f"导出分析结果时出错:\n{str(e)}"
-            )
-
+            if output_path:
+                QtWidgets.QMessageBox.information(
+                    self, "导出成功", 
+                    f"分析结果已导出到:\n{output_path}"
+                )
+    
     def toggle_visualization(self, state):
         """切换可视化功能的启用状态"""
         is_enabled = state == QtCore.Qt.Checked
