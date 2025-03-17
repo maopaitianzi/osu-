@@ -2131,14 +2131,14 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
         QtWidgets.QMessageBox.critical(self, "错误", "音频分析失败：\n" + error_message)
     
     def generate_beatmap(self):
-        """生成谱面 - 已禁用"""
-        QtWidgets.QMessageBox.information(self, "提示", "谱面生成功能已移除")
-        return
+        """生成谱面 - 重定向到新方法"""
+        # 重定向到新的谱面生成方法
+        self.generate_beatmap_from_tab()
     
     def preview_beatmap(self):
-        """预览谱面"""
-        QtWidgets.QMessageBox.information(self, "提示", "谱面生成功能已移除")
-        return
+        """预览谱面 - 重定向到新方法"""
+        # 重定向到新的谱面预览方法
+        self.preview_beatmap_from_tab()
     
     def export_analysis(self):
         """导出音频分析结果"""
@@ -3931,6 +3931,8 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
     
     def generate_beatmap_from_tab(self):
         """从谱面生成选项卡生成谱面"""
+        import os  # 确保在函数内部可以访问os模块
+        
         # 检查音频分析文件夹
         analysis_folder = self.beatmap_gen_audio_path.text()
         if not analysis_folder or not os.path.isdir(analysis_folder):
@@ -3996,7 +3998,7 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
                 os.makedirs(output_dir)
             except:
                 QtWidgets.QMessageBox.critical(self, "错误", "无法创建输出目录")
-            return
+                return
             
         # 获取元数据
         title = self.beatmap_title.text() or "未命名"
@@ -4018,20 +4020,94 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
         self.beatmap_gen_status.setText("正在加载分析数据...")
         self.beatmap_gen_progress.setValue(10)
         
+        # 导入BeatmapGenerator类
+        try:
+            # 尝试直接导入
+            import importlib.util
+            import sys
+            import os
+            import json
+            import traceback
+            from pumianzhizuo.beatmap.beatmap_generator import BeatmapGenerator
+        except ImportError:
+            # 如果失败，尝试添加项目根目录到Python路径
+            try:
+                import os
+                import sys
+                
+                # 获取项目根目录路径
+                current_dir = os.path.dirname(os.path.abspath(__file__))
+                project_root = os.path.dirname(os.path.dirname(current_dir))
+                
+                # 添加到Python路径
+                if project_root not in sys.path:
+                    sys.path.insert(0, project_root)
+                
+                # 再次尝试导入
+                from pumianzhizuo.beatmap.beatmap_generator import BeatmapGenerator
+            except ImportError as e:
+                # 导入失败，尝试直接从相对路径导入
+                try:
+                    import importlib.util
+                    import os
+                    
+                    # 构建beatmap_generator.py的绝对路径
+                    current_dir = os.path.dirname(os.path.abspath(__file__))
+                    module_path = os.path.join(os.path.dirname(current_dir), 'beatmap', 'beatmap_generator.py')
+                    
+                    # 动态导入模块
+                    spec = importlib.util.spec_from_file_location("beatmap_generator", module_path)
+                    beatmap_generator_module = importlib.util.module_from_spec(spec)
+                    spec.loader.exec_module(beatmap_generator_module)
+                    
+                    # 从模块中获取BeatmapGenerator类
+                    BeatmapGenerator = beatmap_generator_module.BeatmapGenerator
+                except Exception as inner_e:
+                    # 所有导入方法均失败
+                    QtWidgets.QMessageBox.critical(
+                        self, 
+                        "错误", 
+                        f"无法导入谱面生成器，请检查安装\n\n详细错误:\n{str(e)}\n{str(inner_e)}"
+                    )
+                    return
+        
         # 加载分析数据
         try:
+            # 创建谱面生成器实例
+            beatmap_generator = BeatmapGenerator()
+            
+            # 设置谱面元数据
+            beatmap_generator.set_metadata(title, artist, creator, difficulty)
+            
+            # 设置难度参数
+            beatmap_generator.set_difficulty(ar, od, hp, cs)
+            
+            # 设置生成参数
+            model_path = None
+            if use_model:
+                # TODO: 实现模型选择逻辑
+                model_path = None
+                
+            beatmap_generator.set_generation_params(density, use_model, model_path)
+            
             # 分析数据字典，用于存储每个轨道的分析数据
             analysis_data_map = {}
-            source_ids = [source["id"] for source in selected_sources]
+            
+            # 设置状态
+            self.beatmap_gen_status.setText("正在加载音频轨道分析数据...")
+            self.beatmap_gen_progress.setValue(20)
             
             # 检查是否有索引文件
             index_files = [f for f in os.listdir(analysis_folder) if f.endswith('.json') and not any(
                 suffix in f for suffix in ["_vocals", "_drums", "_bass", "_other"])]
             
+            import json
+            loaded_sources = 0
+            total_sources = len(selected_sources)
+            
             if index_files:
                 # 从索引文件加载轨道信息
                 try:
-                    import json
                     with open(os.path.join(analysis_folder, index_files[0]), 'r', encoding='utf-8') as f:
                         index_data = json.load(f)
                     
@@ -4054,6 +4130,14 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
                                         "data": source_data,
                                         "priority": source["priority"]
                                     }
+                                    loaded_sources += 1
+                                    
+                                    # 更新进度
+                                    progress = 20 + (loaded_sources / total_sources) * 20
+                                    self.beatmap_gen_progress.setValue(int(progress))
+                                    self.beatmap_gen_status.setText(f"已加载 {loaded_sources}/{total_sources} 个音频轨道")
+                                    QtCore.QCoreApplication.processEvents()
+                                    
                                 except Exception as e:
                                     print(f"载入 {source_id} 分析数据失败: {str(e)}")
                 except Exception as e:
@@ -4075,6 +4159,14 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
                                         "data": source_data,
                                         "priority": source["priority"]
                                     }
+                                    loaded_sources += 1
+                                    
+                                    # 更新进度
+                                    progress = 20 + (loaded_sources / total_sources) * 20
+                                    self.beatmap_gen_progress.setValue(int(progress))
+                                    self.beatmap_gen_status.setText(f"已加载 {loaded_sources}/{total_sources} 个音频轨道")
+                                    QtCore.QCoreApplication.processEvents()
+                                    
                                     break
                                 except Exception as e:
                                     print(f"载入 {source_id} 分析数据失败: {str(e)}")
@@ -4082,46 +4174,55 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
             # 检查是否成功加载了所有需要的轨道数据
             if not analysis_data_map:
                 raise Exception("未能加载任何音频轨道的分析数据")
-                
+            
+            # 加载分析数据到谱面生成器
+            beatmap_generator.load_analysis_data(analysis_data_map)
+            
             # 显示已加载的轨道及其优先级
-            loaded_sources = []
+            loaded_sources_info = []
             for source in selected_sources:
                 if source["id"] in analysis_data_map:
-                    loaded_sources.append(f"{source['name']}(优先级:{source['priority']})")
-            
-            self.beatmap_gen_status.setText(f"已加载 {len(loaded_sources)}/{len(selected_sources)} 个音频轨道")
+                    loaded_sources_info.append(f"{source['name']}(优先级:{source['priority']})")
             
             # 更新进度
-            self.beatmap_gen_progress.setValue(30)
+            self.beatmap_gen_progress.setValue(40)
             self.beatmap_gen_status.setText("正在生成谱面...")
+            QtCore.QCoreApplication.processEvents()
             
-            # TODO: 这里添加实际的谱面生成代码
-            # 应该使用分析数据和优先级信息，结合难度和密度参数生成谱面
+            # 生成谱面物件
+            beatmap_generator.generate_beatmap()
             
-            # 临时的进度显示
-            import time
-            for i in range(4, 10):
-                time.sleep(0.5)
-                self.beatmap_gen_progress.setValue(i * 10)
-                self.beatmap_gen_status.setText(f"正在生成谱面... {i*10}%")
-                QtCore.QCoreApplication.processEvents()
+            # 更新进度
+            self.beatmap_gen_progress.setValue(70)
+            self.beatmap_gen_status.setText("正在生成谱面文件...")
+            QtCore.QCoreApplication.processEvents()
             
-            # 模拟生成完成
-            output_file = os.path.join(output_dir, f"{title} - {artist} [{difficulty}].osu")
+            # 构建输出文件路径
+            difficulty_text = difficulty.replace(' ', '')
+            sanitized_title = ''.join(c for c in title if c.isalnum() or c in ' -_[](){}')
+            sanitized_artist = ''.join(c for c in artist if c.isalnum() or c in ' -_[](){}')
+            output_filename = f"{sanitized_artist} - {sanitized_title} [{difficulty_text}].osu"
+            output_path = os.path.join(output_dir, output_filename)
             
+            # 生成osu文件
+            beatmap_file_path = beatmap_generator.generate_osu_file(output_path)
+            
+            # 更新状态
             self.beatmap_gen_status.setText("谱面生成完成!")
             self.beatmap_gen_progress.setValue(100)
             self.preview_btn.setEnabled(True)
             
             # 显示成功消息和使用的轨道信息
-            used_tracks_info = "\n".join([f"- {source}" for source in loaded_sources])
+            used_tracks_info = "\n".join([f"- {source}" for source in loaded_sources_info])
             QtWidgets.QMessageBox.information(
                 self, 
                 "生成完成", 
-                f"谱面已生成: {output_file}\n\n使用的音频轨道:\n{used_tracks_info}"
+                f"谱面已生成: {output_filename}\n\n使用的音频轨道:\n{used_tracks_info}"
             )
             
         except Exception as e:
+            import traceback
+            traceback.print_exc()
             self.beatmap_gen_status.setText("生成失败: " + str(e))
             self.beatmap_gen_progress.setValue(0)
             QtWidgets.QMessageBox.critical(self, "错误", f"谱面生成失败: {str(e)}")
@@ -4129,7 +4230,85 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
     
     def preview_beatmap_from_tab(self):
         """预览生成的谱面"""
-        QtWidgets.QMessageBox.information(self, "功能未实现", "谱面预览功能正在开发中")
+        import os
+        import glob
+        import subprocess
+
+        # 检查输出目录
+        output_dir = self.beatmap_gen_output_path.text()
+        if not output_dir or not os.path.exists(output_dir):
+            QtWidgets.QMessageBox.warning(self, "错误", "谱面输出目录不存在，请先生成谱面")
+            return
+            
+        # 构建标题和艺术家名以查找谱面文件
+        title = self.beatmap_title.text() or "未命名"
+        artist = self.beatmap_artist.text() or "未知艺术家"
+        difficulty = self.difficulty_selector.currentText()
+        
+        # 查找生成的谱面文件
+        difficulty_text = difficulty.replace(' ', '')
+        sanitized_title = ''.join(c for c in title if c.isalnum() or c in ' -_[](){}')
+        sanitized_artist = ''.join(c for c in artist if c.isalnum() or c in ' -_[](){}')
+        filename_pattern = f"{sanitized_artist} - {sanitized_title} [{difficulty_text}].osu"
+        
+        beatmap_file = os.path.join(output_dir, filename_pattern)
+        
+        if not os.path.exists(beatmap_file):
+            # 尝试使用通配符查找类似的文件
+            import glob
+            similar_files = glob.glob(os.path.join(output_dir, f"*{sanitized_title}*[{difficulty_text}]*.osu"))
+            
+            if similar_files:
+                beatmap_file = similar_files[0]
+            else:
+                QtWidgets.QMessageBox.warning(self, "文件未找到", "找不到生成的谱面文件，请先生成谱面")
+                return
+        
+        # 尝试找到osu安装目录
+        osu_path = None
+        
+        # 尝试从Windows注册表查找osu安装路径
+        try:
+            import winreg
+            key = winreg.OpenKey(winreg.HKEY_CLASSES_ROOT, r"osu\shell\open\command")
+            command = winreg.QueryValue(key, "")
+            # 从注册表命令中提取路径
+            # 通常格式: "C:\Path\to\osu.exe" "%1"
+            if command and '"' in command:
+                osu_path = command.split('"')[1]
+        except:
+            pass
+        
+        # 如果注册表查找失败，尝试常见的安装路径
+        if not osu_path or not os.path.exists(osu_path):
+            common_paths = [
+                os.path.join(os.environ.get('LOCALAPPDATA', ''), "osu!", "osu!.exe"),
+                os.path.join(os.environ.get('PROGRAMFILES', ''), "osu!", "osu!.exe"),
+                os.path.join(os.environ.get('PROGRAMFILES(X86)', ''), "osu!", "osu!.exe")
+            ]
+            
+            for path in common_paths:
+                if os.path.exists(path):
+                    osu_path = path
+                    break
+        
+        if not osu_path or not os.path.exists(osu_path):
+            # 如果自动查找失败，让用户选择osu可执行文件
+            osu_path, _ = QtWidgets.QFileDialog.getOpenFileName(
+                self, "选择osu!.exe", "", "osu! (osu!.exe)"
+            )
+            
+            if not osu_path:
+                QtWidgets.QMessageBox.warning(self, "操作取消", "用户取消了选择osu!.exe")
+                return
+        
+        # 启动osu并打开谱面
+        try:
+            import subprocess
+            subprocess.Popen([osu_path, beatmap_file])
+            self.beatmap_gen_status.setText(f"已启动osu!预览谱面: {os.path.basename(beatmap_file)}")
+        except Exception as e:
+            QtWidgets.QMessageBox.critical(self, "启动失败", f"无法启动osu!预览谱面: {str(e)}")
 
     def showEvent(self, event):
         """窗口显示时的处理"""

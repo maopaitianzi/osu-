@@ -6,3 +6,5 @@
 """
 
 from .analyzer import BeatmapAnalyzer 
+
+# pumianzhizuo.beatmap 子包初始化文件 
