@@ -1616,10 +1616,13 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
             output_path = self.audio_analyzer.export_analysis_to_json(file_path)
             
             if output_path:
+                # 获取包含所有分析结果的文件夹路径
+                analysis_folder = os.path.dirname(output_path)
+                
                 # 所有源的分析结果以及单独文件都已导出
                 QtWidgets.QMessageBox.information(
                     self, "导出成功", 
-                    f"所有音频源的分析结果已导出到:\n{os.path.dirname(output_path)}\n\n"
+                    f"所有音频源的分析结果已导出到文件夹:\n{analysis_folder}\n\n"
                     f"主索引文件: {os.path.basename(output_path)}"
                 )
         else:

@@ -1192,8 +1192,9 @@ class AudioAnalyzer(QtCore.QObject):
             base_dir = os.path.dirname(output_path)
             base_name = os.path.splitext(os.path.basename(output_path))[0]
         
-        # 确保输出目录存在
-        os.makedirs(base_dir, exist_ok=True)
+        # 创建专门用于存放分析结果的文件夹
+        analysis_folder = os.path.join(base_dir, f"{base_name}_analysis")
+        os.makedirs(analysis_folder, exist_ok=True)
         
         # 音频源类型的人类可读名称
         source_display_names = {
@@ -1214,7 +1215,7 @@ class AudioAnalyzer(QtCore.QObject):
             
             # 构建源分析文件路径
             source_filename = f"{base_name}_{display_name}_analysis.json"
-            source_path = os.path.join(base_dir, source_filename)
+            source_path = os.path.join(analysis_folder, source_filename)
             
             # 创建干净的副本，移除可能导致循环引用的字段
             clean_data = copy.deepcopy(source_data)
@@ -1249,7 +1250,7 @@ class AudioAnalyzer(QtCore.QObject):
         }
         
         # 主索引文件路径
-        main_file_path = os.path.join(base_dir, f"{base_name}_all_sources_analysis.json")
+        main_file_path = os.path.join(analysis_folder, f"{base_name}_all_sources_analysis.json")
         
         try:
             with open(main_file_path, 'w', encoding='utf-8') as f:
