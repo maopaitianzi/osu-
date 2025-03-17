@@ -90,7 +90,7 @@ class BeatmapGenerator:
         
     def _get_random_position(self):
         """获取随机位置"""
-        margin = 80  # 距离边缘的安全距离
+        margin = 10  # 距离边缘的安全距离
         x = random.randint(margin, self.playfield_width - margin)
         y = random.randint(margin, self.playfield_height - margin)
         return x, y
