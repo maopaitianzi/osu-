@@ -207,6 +207,10 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
         beatmap_analysis_tab = QtWidgets.QWidget()
         tab_widget.addTab(beatmap_analysis_tab, "谱面分析")
         
+        # 创建"谱面生成"选项卡
+        beatmap_generate_tab = QtWidgets.QWidget()
+        tab_widget.addTab(beatmap_generate_tab, "谱面生成")
+        
         # 创建"谱面预览"选项卡
         preview_tab = QtWidgets.QWidget()
         tab_widget.addTab(preview_tab, "谱面预览")
@@ -316,72 +320,26 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
         
         file_layout.addLayout(gpu_row)
         
+        # 添加输出设置
+        output_row = QtWidgets.QHBoxLayout()
+        output_row.setSpacing(10)
+        
+        output_label = QtWidgets.QLabel("输出目录:")
+        
+        self.output_path = QtWidgets.QLineEdit()
+        self.output_path.setPlaceholderText("默认：与音频文件相同目录")
+        
+        browse_output_btn = QtWidgets.QPushButton("浏览")
+        browse_output_btn.setFixedWidth(100)
+        browse_output_btn.clicked.connect(self.browse_output_directory)
+        
+        output_row.addWidget(output_label)
+        output_row.addWidget(self.output_path, 3)
+        output_row.addWidget(browse_output_btn)
+        
+        file_layout.addLayout(output_row)
+        
         generate_layout.addWidget(file_group)
-        
-        # 谱面参数部分
-        params_container = QtWidgets.QHBoxLayout()
-        
-        # 基本参数组
-        basic_params_group = QtWidgets.QGroupBox("基本参数")
-        basic_params_layout = QtWidgets.QFormLayout(basic_params_group)
-        
-        self.difficulty_combo = QtWidgets.QComboBox()
-        self.difficulty_combo.addItems(["Easy", "Normal", "Hard", "Expert", "Expert+"])
-        
-        self.style_combo = QtWidgets.QComboBox()
-        self.style_combo.addItems(["Standard", "Stream", "Jump", "Technical"])
-        
-        self.ar_slider = QtWidgets.QSlider(QtCore.Qt.Horizontal)
-        self.ar_slider.setRange(0, 10)
-        self.ar_slider.setValue(8)
-        
-        self.od_slider = QtWidgets.QSlider(QtCore.Qt.Horizontal)
-        self.od_slider.setRange(0, 10)
-        self.od_slider.setValue(7)
-        
-        # 添加表单项
-        basic_params_layout.addRow("难度级别:", self.difficulty_combo)
-        basic_params_layout.addRow("谱面风格:", self.style_combo)
-        basic_params_layout.addRow("AR值 (8):", self.ar_slider)
-        basic_params_layout.addRow("OD值 (7):", self.od_slider)
-        
-        # 连接滑块值变化的信号
-        self.ar_slider.valueChanged.connect(
-            lambda value: basic_params_layout.itemAt(4).widget().setText(f"AR值 ({value}):")
-        )
-        self.od_slider.valueChanged.connect(
-            lambda value: basic_params_layout.itemAt(6).widget().setText(f"OD值 ({value}):")
-        )
-        
-        # 高级参数组
-        advanced_params_group = QtWidgets.QGroupBox("高级参数")
-        advanced_params_layout = QtWidgets.QFormLayout(advanced_params_group)
-        
-        self.stream_density_slider = QtWidgets.QSlider(QtCore.Qt.Horizontal)
-        self.stream_density_slider.setRange(0, 100)
-        self.stream_density_slider.setValue(50)
-        
-        self.jump_intensity_slider = QtWidgets.QSlider(QtCore.Qt.Horizontal)
-        self.jump_intensity_slider.setRange(0, 100)
-        self.jump_intensity_slider.setValue(50)
-        
-        # 添加表单项
-        advanced_params_layout.addRow("流串密度 (50%):", self.stream_density_slider)
-        advanced_params_layout.addRow("跳跃强度 (50%):", self.jump_intensity_slider)
-        
-        # 连接滑块值变化的信号
-        self.stream_density_slider.valueChanged.connect(
-            lambda value: advanced_params_layout.itemAt(0).widget().setText(f"流串密度 ({value}%):")
-        )
-        self.jump_intensity_slider.valueChanged.connect(
-            lambda value: advanced_params_layout.itemAt(2).widget().setText(f"跳跃强度 ({value}%):")
-        )
-        
-        # 添加参数组到容器
-        params_container.addWidget(basic_params_group)
-        params_container.addWidget(advanced_params_group)
-        
-        generate_layout.addLayout(params_container)
         
         # 操作区域
         actions_layout = QtWidgets.QHBoxLayout()
@@ -792,18 +750,35 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
         
         dataset_layout.addWidget(dataset_results_group)
         
-        # 设置模型训练选项卡内容
-        training_layout = QtWidgets.QVBoxLayout(model_training_tab)
+        # 设置"模型训练"选项卡的布局
+        self.setup_model_training_tab(model_training_tab)
         
+        # 设置"设置"选项卡的布局
+        self.setup_settings_tab(settings_tab)
+        
+        # 设置"谱面生成"选项卡的布局
+        self.setup_beatmap_generate_tab(beatmap_generate_tab)
+        
+        # 设置状态栏
+        self.status_bar = self.statusBar()
+        self.status_label = QtWidgets.QLabel("就绪")
+        self.status_bar.addWidget(self.status_label, 1)
+        
+        # 设置初始状态和信号连接
+        self.reset_source_priority()
+        self.init_training_signals()
+    
+    def setup_model_training_tab(self, tab):
+        """设置模型训练选项卡的布局"""
         # 创建滚动区域，确保在窗口较小时能显示所有内容
         training_scroll_area = QtWidgets.QScrollArea()
         training_scroll_area.setWidgetResizable(True)
         training_scroll_area.setFrameShape(QtWidgets.QFrame.NoFrame)
         
-        # 创建滚动区域的内容容器
+        # 创建滚动区域内容窗口
         training_scroll_content = QtWidgets.QWidget()
-        training_scroll_layout = QtWidgets.QVBoxLayout(training_scroll_content)
-        training_scroll_layout.setSpacing(15)
+        training_layout = QtWidgets.QVBoxLayout(training_scroll_content)
+        training_layout.setSpacing(15)
         
         # 训练数据设置
         training_data_group = QtWidgets.QGroupBox("训练数据设置")
@@ -857,7 +832,7 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
         model_output_path_layout.addWidget(browse_model_output_btn, 1)
         training_data_layout.addLayout(model_output_path_layout, 2, 1)
         
-        training_scroll_layout.addWidget(training_data_group)
+        training_layout.addWidget(training_data_group)
         
         # 模型训练参数
         training_params_group = QtWidgets.QGroupBox("训练参数")
@@ -965,7 +940,7 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
         self.use_mixed_precision.setEnabled(gpu_available and self.use_gpu_checkbox.isChecked())
         training_params_layout.addWidget(self.use_mixed_precision, 7, 0, 1, 2)
         
-        training_scroll_layout.addWidget(training_params_group)
+        training_layout.addWidget(training_params_group)
         
         # 训练操作区
         training_actions_group = QtWidgets.QGroupBox("训练操作")
@@ -1042,67 +1017,42 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
         training_actions_layout.addWidget(self.training_plot_widget)
         training_actions_layout.addLayout(training_buttons_layout)
         
-        training_scroll_layout.addWidget(training_actions_group)
+        training_layout.addWidget(training_actions_group)
         
         # 设置滚动区域的内容并添加到主布局
         training_scroll_area.setWidget(training_scroll_content)
-        training_layout.addWidget(training_scroll_area)
         
-        # 设置设置选项卡内容
-        settings_layout = QtWidgets.QVBoxLayout(settings_tab)
+        # 创建主布局
+        layout = QtWidgets.QVBoxLayout(tab)
+        layout.addWidget(training_scroll_area)
         
+    def setup_settings_tab(self, tab):
+        """设置设置选项卡的布局"""
         # 设置分组框标题样式
         group_box_style = """
         QGroupBox {
             font-weight: bold;
-            font-size: 13px;
-            border: 1px solid #aaa;
-            border-radius: 4px;
-            margin-top: 12px;
-            padding-top: 8px;
+                border: 1px solid #CCCCCC;
+                border-radius: 5px;
+                margin-top: 10px;
+                padding-top: 15px;
         }
         QGroupBox::title {
             subcontrol-origin: margin;
-            subcontrol-position: top left;
             left: 10px;
-            padding: 0 5px;
-            background-color: #f8f8f8;
+                padding: 0 5px 0 5px;
         }
         """
         
-        # 创建滚动区域和内容容器
+        # 创建滚动区域，确保在窗口较小时能显示所有内容
         settings_scroll_area = QtWidgets.QScrollArea()
         settings_scroll_area.setWidgetResizable(True)
         settings_scroll_area.setFrameShape(QtWidgets.QFrame.NoFrame)
-        settings_scroll_area.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
-        settings_scroll_area.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarAsNeeded)
-        settings_scroll_area.setToolTip("滚动查看更多设置选项")
         
-        # 设置滚动条样式
-        scroll_bar_style = """
-        QScrollBar:vertical {
-            background: #f0f0f0;
-            width: 10px;
-            margin: 0px;
-        }
-        QScrollBar::handle:vertical {
-            background: #b0b0b0;
-            min-height: 20px;
-            border-radius: 5px;
-        }
-        QScrollBar::handle:vertical:hover {
-            background: #909090;
-        }
-        QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
-            height: 0px;
-        }
-        """
-        settings_scroll_area.setStyleSheet(scroll_bar_style)
-        
+        # 创建滚动区域内容窗口
         settings_scroll_content = QtWidgets.QWidget()
-        settings_scroll_layout = QtWidgets.QVBoxLayout(settings_scroll_content)
-        settings_scroll_layout.setContentsMargins(0, 0, 0, 0)
-        settings_scroll_layout.setSpacing(10)  # 设置各组之间的间距
+        settings_layout = QtWidgets.QVBoxLayout(settings_scroll_content)
+        settings_layout.setSpacing(15)
         
         # 模型设置
         model_group = QtWidgets.QGroupBox("模型设置")
@@ -1114,25 +1064,6 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
         self.model_combo.addItems(["默认模型", "流行风格", "古典风格", "电子风格"])
         
         model_layout.addRow("生成模型:", self.model_combo)
-        
-        # 输出设置
-        output_group = QtWidgets.QGroupBox("输出设置")
-        output_group.setStyleSheet(group_box_style)
-        output_layout = QtWidgets.QFormLayout(output_group)
-        output_layout.setContentsMargins(10, 15, 10, 10)  # 调整内边距
-        
-        self.output_path = QtWidgets.QLineEdit()
-        self.output_path.setPlaceholderText("默认：与音频文件相同目录")
-        
-        browse_output_btn = QtWidgets.QPushButton("浏览")
-        browse_output_btn.setFixedWidth(100)
-        browse_output_btn.clicked.connect(self.browse_output_directory)
-        
-        output_path_layout = QtWidgets.QHBoxLayout()
-        output_path_layout.addWidget(self.output_path)
-        output_path_layout.addWidget(browse_output_btn)
-        
-        output_layout.addRow("输出目录:", output_path_layout)
         
         # 添加导出选项
         export_options_group = QtWidgets.QGroupBox("导出选项")
@@ -1198,9 +1129,8 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
         export_options_layout.addLayout(auto_export_layout)
         
         # 添加设置组到滚动区域布局
-        settings_scroll_layout.addWidget(model_group)
-        settings_scroll_layout.addWidget(output_group)
-        settings_scroll_layout.addWidget(export_options_group)
+        settings_layout.addWidget(model_group)
+        settings_layout.addWidget(export_options_group)
         
         # 添加可视化设置组
         visualization_group = QtWidgets.QGroupBox("可视化设置")
@@ -1325,19 +1255,200 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
         audio_separation_layout.addWidget(self.export_separated_audio_cb)
         
         # 添加设置组到滚动区域布局
-        settings_scroll_layout.addWidget(audio_separation_group)
-        settings_scroll_layout.addWidget(visualization_group)
+        settings_layout.addWidget(audio_separation_group)
+        settings_layout.addWidget(visualization_group)
         
-        settings_scroll_layout.addStretch()
+        settings_layout.addStretch()
         
         # 设置滚动区域的内容并添加到主布局
         settings_scroll_area.setWidget(settings_scroll_content)
-        settings_layout.addWidget(settings_scroll_area)
         
-        # 创建状态栏
-        self.statusBar = QtWidgets.QStatusBar()
-        self.setStatusBar(self.statusBar)
-        self.statusBar.showMessage("准备就绪")
+        # 创建主布局
+        layout = QtWidgets.QVBoxLayout(tab)
+        layout.addWidget(settings_scroll_area)
+    
+    def setup_beatmap_generate_tab(self, tab):
+        """设置谱面生成选项卡的布局"""
+        # 创建滚动区域
+        scroll_area = QtWidgets.QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setFrameShape(QtWidgets.QFrame.NoFrame)
+        
+        # 创建滚动区域内容窗口
+        scroll_content = QtWidgets.QWidget()
+        layout = QtWidgets.QVBoxLayout(scroll_content)
+        layout.setSpacing(15)
+        
+        # 音频文件选择组
+        audio_group = QtWidgets.QGroupBox("音频文件")
+        audio_layout = QtWidgets.QVBoxLayout(audio_group)
+        
+        audio_file_row = QtWidgets.QHBoxLayout()
+        self.beatmap_gen_audio_path = QtWidgets.QLineEdit()
+        self.beatmap_gen_audio_path.setPlaceholderText("请选择音频文件...")
+        
+        browse_audio_btn = QtWidgets.QPushButton("浏览")
+        browse_audio_btn.clicked.connect(self.browse_beatmap_gen_audio)
+        
+        audio_file_row.addWidget(self.beatmap_gen_audio_path, 3)
+        audio_file_row.addWidget(browse_audio_btn, 1)
+        audio_layout.addLayout(audio_file_row)
+        
+        # 输出目录选择
+        output_row = QtWidgets.QHBoxLayout()
+        self.beatmap_gen_output_path = QtWidgets.QLineEdit()
+        self.beatmap_gen_output_path.setPlaceholderText("谱面保存目录...")
+        
+        browse_output_btn = QtWidgets.QPushButton("浏览")
+        browse_output_btn.clicked.connect(self.browse_beatmap_gen_output)
+        
+        output_row.addWidget(self.beatmap_gen_output_path, 3)
+        output_row.addWidget(browse_output_btn, 1)
+        audio_layout.addLayout(output_row)
+        
+        layout.addWidget(audio_group)
+        
+        # 谱面元数据
+        metadata_group = QtWidgets.QGroupBox("谱面元数据")
+        metadata_layout = QtWidgets.QGridLayout(metadata_group)
+        
+        metadata_layout.addWidget(QtWidgets.QLabel("曲目标题:"), 0, 0)
+        self.beatmap_title = QtWidgets.QLineEdit()
+        metadata_layout.addWidget(self.beatmap_title, 0, 1)
+        
+        metadata_layout.addWidget(QtWidgets.QLabel("艺术家:"), 1, 0)
+        self.beatmap_artist = QtWidgets.QLineEdit()
+        metadata_layout.addWidget(self.beatmap_artist, 1, 1)
+        
+        metadata_layout.addWidget(QtWidgets.QLabel("谱面作者:"), 2, 0)
+        self.beatmap_creator = QtWidgets.QLineEdit("AI谱面生成器")
+        metadata_layout.addWidget(self.beatmap_creator, 2, 1)
+        
+        layout.addWidget(metadata_group)
+        
+        # 难度设置
+        difficulty_group = QtWidgets.QGroupBox("难度设置")
+        difficulty_layout = QtWidgets.QVBoxLayout(difficulty_group)
+        
+        # 难度选择
+        difficulty_selector_row = QtWidgets.QHBoxLayout()
+        difficulty_selector_row.addWidget(QtWidgets.QLabel("难度:"))
+        self.difficulty_selector = QtWidgets.QComboBox()
+        self.difficulty_selector.addItems(["Easy", "Normal", "Hard", "Expert"])
+        difficulty_selector_row.addWidget(self.difficulty_selector)
+        difficulty_layout.addLayout(difficulty_selector_row)
+        
+        # 难度参数
+        difficulty_params_grid = QtWidgets.QGridLayout()
+        
+        difficulty_params_grid.addWidget(QtWidgets.QLabel("接近速度(AR):"), 0, 0)
+        self.ar_slider = QtWidgets.QSlider(QtCore.Qt.Horizontal)
+        self.ar_slider.setRange(0, 10)
+        self.ar_slider.setValue(5)
+        self.ar_value = QtWidgets.QLabel("5.0")
+        difficulty_params_grid.addWidget(self.ar_slider, 0, 1)
+        difficulty_params_grid.addWidget(self.ar_value, 0, 2)
+        
+        difficulty_params_grid.addWidget(QtWidgets.QLabel("总体难度(OD):"), 1, 0)
+        self.od_slider = QtWidgets.QSlider(QtCore.Qt.Horizontal)
+        self.od_slider.setRange(0, 10)
+        self.od_slider.setValue(5)
+        self.od_value = QtWidgets.QLabel("5.0")
+        difficulty_params_grid.addWidget(self.od_slider, 1, 1)
+        difficulty_params_grid.addWidget(self.od_value, 1, 2)
+        
+        difficulty_params_grid.addWidget(QtWidgets.QLabel("血量消耗(HP):"), 2, 0)
+        self.hp_slider = QtWidgets.QSlider(QtCore.Qt.Horizontal)
+        self.hp_slider.setRange(0, 10)
+        self.hp_slider.setValue(5)
+        self.hp_value = QtWidgets.QLabel("5.0")
+        difficulty_params_grid.addWidget(self.hp_slider, 2, 1)
+        difficulty_params_grid.addWidget(self.hp_value, 2, 2)
+        
+        difficulty_params_grid.addWidget(QtWidgets.QLabel("圆圈大小(CS):"), 3, 0)
+        self.cs_slider = QtWidgets.QSlider(QtCore.Qt.Horizontal)
+        self.cs_slider.setRange(0, 10)
+        self.cs_slider.setValue(4)
+        self.cs_value = QtWidgets.QLabel("4.0")
+        difficulty_params_grid.addWidget(self.cs_slider, 3, 1)
+        difficulty_params_grid.addWidget(self.cs_value, 3, 2)
+        
+        # 连接信号
+        self.ar_slider.valueChanged.connect(lambda v: self.ar_value.setText(f"{v/1:.1f}"))
+        self.od_slider.valueChanged.connect(lambda v: self.od_value.setText(f"{v/1:.1f}"))
+        self.hp_slider.valueChanged.connect(lambda v: self.hp_value.setText(f"{v/1:.1f}"))
+        self.cs_slider.valueChanged.connect(lambda v: self.cs_value.setText(f"{v/1:.1f}"))
+        
+        difficulty_layout.addLayout(difficulty_params_grid)
+        layout.addWidget(difficulty_group)
+        
+        # 生成选项
+        options_group = QtWidgets.QGroupBox("生成选项")
+        options_layout = QtWidgets.QVBoxLayout(options_group)
+        
+        # 模型选项
+        model_row = QtWidgets.QHBoxLayout()
+        self.use_model_checkbox = QtWidgets.QCheckBox("使用模型辅助生成")
+        model_row.addWidget(self.use_model_checkbox)
+        self.select_model_btn = QtWidgets.QPushButton("选择模型")
+        self.select_model_btn.setEnabled(False)
+        model_row.addWidget(self.select_model_btn)
+        options_layout.addLayout(model_row)
+        
+        # 启用模型选择
+        self.use_model_checkbox.stateChanged.connect(
+            lambda state: self.select_model_btn.setEnabled(state == QtCore.Qt.Checked)
+        )
+        
+        # 生成密度
+        density_row = QtWidgets.QHBoxLayout()
+        density_row.addWidget(QtWidgets.QLabel("生成密度:"))
+        self.density_slider = QtWidgets.QSlider(QtCore.Qt.Horizontal)
+        self.density_slider.setRange(1, 10)
+        self.density_slider.setValue(5)
+        self.density_value = QtWidgets.QLabel("5")
+        density_row.addWidget(self.density_slider)
+        density_row.addWidget(self.density_value)
+        options_layout.addLayout(density_row)
+        
+        # 连接信号
+        self.density_slider.valueChanged.connect(lambda v: self.density_value.setText(str(v)))
+        
+        layout.addWidget(options_group)
+        
+        # 操作按钮
+        buttons_row = QtWidgets.QHBoxLayout()
+        
+        self.analyze_audio_btn = QtWidgets.QPushButton("分析音频")
+        self.analyze_audio_btn.clicked.connect(self.analyze_audio_for_beatmap)
+        buttons_row.addWidget(self.analyze_audio_btn)
+        
+        self.generate_btn = QtWidgets.QPushButton("生成谱面")
+        self.generate_btn.clicked.connect(self.generate_beatmap_from_tab)
+        self.generate_btn.setEnabled(False)
+        buttons_row.addWidget(self.generate_btn)
+        
+        self.preview_btn = QtWidgets.QPushButton("预览谱面")
+        self.preview_btn.clicked.connect(self.preview_beatmap_from_tab)
+        self.preview_btn.setEnabled(False)
+        buttons_row.addWidget(self.preview_btn)
+        
+        layout.addLayout(buttons_row)
+        
+        # 生成状态
+        self.beatmap_gen_status = QtWidgets.QLabel("就绪")
+        self.beatmap_gen_progress = QtWidgets.QProgressBar()
+        self.beatmap_gen_progress.setRange(0, 100)
+        self.beatmap_gen_progress.setValue(0)
+        layout.addWidget(self.beatmap_gen_status)
+        layout.addWidget(self.beatmap_gen_progress)
+        
+        # 设置滚动区域
+        scroll_area.setWidget(scroll_content)
+        
+        # 主布局
+        main_layout = QtWidgets.QVBoxLayout(tab)
+        main_layout.addWidget(scroll_area)
     
     def browse_audio(self):
         """浏览并选择音频文件"""
@@ -3320,38 +3431,178 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
         
     def import_bpm_from_beatmap(self):
         """从谱面文件导入BPM"""
-        # 检查音频文件是否已加载
-        if not hasattr(self, 'audio_analyzer') or self.audio_analyzer.y is None:
-            QtWidgets.QMessageBox.warning(self, "操作失败", "请先加载音频文件")
-            return
-            
-        # 打开文件对话框选择谱面文件
-        file_dialog = QtWidgets.QFileDialog()
-        beatmap_path, _ = file_dialog.getOpenFileName(
-            self, "选择osu谱面文件", 
-            "", 
-            "osu谱面文件 (*.osu)"
+        file_path, _ = QtWidgets.QFileDialog.getOpenFileName(
+            self,
+            "选择OSU谱面文件",
+            "",
+            "OSU文件 (*.osu)"
         )
         
-        if not beatmap_path:
+        if file_path:
+            success = self.audio_analyzer.import_beatmap_bpm(file_path)
+            if success:
+                self.status_label.setText(f"已从谱面导入BPM: {self.audio_analyzer.bpm:.2f}")
+                self.bpm_value.setText(f"{self.audio_analyzer.bpm:.2f}")
+            else:
+                self.status_label.setText("从谱面导入BPM失败")
+    
+    def browse_beatmap_gen_audio(self):
+        """浏览谱面生成音频文件"""
+        file_path, _ = QtWidgets.QFileDialog.getOpenFileName(
+            self,
+            "选择音频文件",
+            "",
+            "音频文件 (*.mp3 *.wav *.ogg *.flac)"
+        )
+        
+        if file_path:
+            self.beatmap_gen_audio_path.setText(file_path)
+            # 尝试自动填充元数据
+            try:
+                import os
+                import taglib
+                
+                audio_file = taglib.File(file_path)
+                
+                # 获取文件名作为标题（如果没有标签）
+                base_name = os.path.basename(file_path)
+                title = os.path.splitext(base_name)[0]
+                
+                # 从标签中获取更好的信息
+                if 'TITLE' in audio_file.tags and audio_file.tags['TITLE']:
+                    self.beatmap_title.setText(audio_file.tags['TITLE'][0])
+                else:
+                    self.beatmap_title.setText(title)
+                    
+                if 'ARTIST' in audio_file.tags and audio_file.tags['ARTIST']:
+                    self.beatmap_artist.setText(audio_file.tags['ARTIST'][0])
+            except:
+                # 如果无法读取标签，至少设置文件名
+                import os
+                base_name = os.path.basename(file_path)
+                title = os.path.splitext(base_name)[0]
+                self.beatmap_title.setText(title)
+    
+    def browse_beatmap_gen_output(self):
+        """浏览谱面生成输出目录"""
+        dir_path = QtWidgets.QFileDialog.getExistingDirectory(
+            self,
+            "选择谱面输出目录",
+            ""
+        )
+        
+        if dir_path:
+            self.beatmap_gen_output_path.setText(dir_path)
+    
+    def analyze_audio_for_beatmap(self):
+        """分析音频用于谱面生成"""
+        audio_path = self.beatmap_gen_audio_path.text()
+        
+        if not audio_path:
+            QtWidgets.QMessageBox.warning(self, "警告", "请先选择音频文件")
             return
             
-        # 导入BPM
-        success = self.audio_analyzer.import_beatmap_bpm(beatmap_path)
+        if not os.path.exists(audio_path):
+            QtWidgets.QMessageBox.warning(self, "警告", "所选音频文件不存在")
+            return
+            
+        # 设置状态
+        self.beatmap_gen_status.setText("正在分析音频...")
+        self.beatmap_gen_progress.setValue(10)
+        self.analyze_audio_btn.setEnabled(False)
         
-        if success:
-            # 更新UI
-            imported_bpm = self.audio_analyzer.get_bpm()
-            self.bpm_input.setValue(imported_bpm)
-            self.status_label.setText(f"已成功从谱面导入BPM: {imported_bpm}")
+        # 使用现有的音频分析器
+        from audio.analyzer import AudioAnalyzer
+        self.beatmap_gen_analyzer = AudioAnalyzer()
+        
+        # 连接信号
+        self.beatmap_gen_analyzer.analysis_progress.connect(self.update_beatmap_gen_progress)
+        self.beatmap_gen_analyzer.analysis_complete.connect(self.handle_beatmap_gen_analysis_complete)
+        self.beatmap_gen_analyzer.analysis_error.connect(self.handle_beatmap_gen_analysis_error)
+        
+        # 开始分析
+        self.beatmap_gen_analyzer.load_and_analyze(audio_path)
+    
+    def update_beatmap_gen_progress(self, progress):
+        """更新谱面生成分析进度"""
+        self.beatmap_gen_progress.setValue(progress)
+        self.beatmap_gen_status.setText(f"音频分析中: {progress}%")
+    
+    def handle_beatmap_gen_analysis_complete(self, features):
+        """处理谱面生成音频分析完成"""
+        self.beatmap_gen_status.setText("音频分析完成")
+        self.beatmap_gen_progress.setValue(100)
+        self.analyze_audio_btn.setEnabled(True)
+        self.generate_btn.setEnabled(True)
+        
+        # 存储分析特征
+        self.beatmap_gen_features = features
+        
+        # 显示成功消息
+        QtWidgets.QMessageBox.information(self, "分析完成", "音频分析已完成，可以生成谱面")
+    
+    def handle_beatmap_gen_analysis_error(self, error_message):
+        """处理谱面生成音频分析错误"""
+        self.beatmap_gen_status.setText("分析失败: " + error_message)
+        self.beatmap_gen_progress.setValue(0)
+        self.analyze_audio_btn.setEnabled(True)
+        QtWidgets.QMessageBox.critical(self, "错误", "音频分析失败：\n" + error_message)
+    
+    def generate_beatmap_from_tab(self):
+        """从谱面生成选项卡生成谱面"""
+        # 检查是否有分析结果
+        if not hasattr(self, 'beatmap_gen_features') or not self.beatmap_gen_features:
+            QtWidgets.QMessageBox.warning(self, "警告", "请先分析音频")
+            return
             
-            # 选中手动BPM选项
-            self.manual_bpm_rb.setChecked(True)
+        # 检查输出目录
+        output_dir = self.beatmap_gen_output_path.text()
+        if not output_dir:
+            output_dir = os.path.dirname(self.beatmap_gen_audio_path.text())
+            self.beatmap_gen_output_path.setText(output_dir)
             
-            # 重新分析
-            self.analyze_audio()
-        else:
-            QtWidgets.QMessageBox.warning(self, "导入失败", "无法从谱面文件导入BPM")
+        if not os.path.exists(output_dir):
+            try:
+                os.makedirs(output_dir)
+            except:
+                QtWidgets.QMessageBox.critical(self, "错误", "无法创建输出目录")
+                return
+                
+        # 获取元数据
+        title = self.beatmap_title.text() or "未命名"
+        artist = self.beatmap_artist.text() or "未知艺术家"
+        creator = self.beatmap_creator.text() or "AI谱面生成器"
+        difficulty = self.difficulty_selector.currentText()
+        
+        # 获取难度参数
+        ar = self.ar_slider.value()
+        od = self.od_slider.value()
+        hp = self.hp_slider.value()
+        cs = self.cs_slider.value()
+        
+        # 获取生成参数
+        use_model = self.use_model_checkbox.isChecked()
+        density = self.density_slider.value()
+        
+        # 设置状态
+        self.beatmap_gen_status.setText("正在生成谱面...")
+        self.beatmap_gen_progress.setValue(0)
+        self.generate_btn.setEnabled(False)
+        
+        # 这里只是一个占位实现，实际需要集成谱面生成器
+        # TODO: 集成实际的谱面生成器
+        QtWidgets.QMessageBox.information(self, "功能未实现", 
+            "谱面生成功能正在开发中，尚未完全实现。\n\n" + 
+            f"将生成难度为 {difficulty} 的谱面，参数：\n" +
+            f"AR={ar}, OD={od}, HP={hp}, CS={cs}, 密度={density}")
+            
+        self.beatmap_gen_status.setText("就绪")
+        self.beatmap_gen_progress.setValue(0)
+        self.generate_btn.setEnabled(True)
+    
+    def preview_beatmap_from_tab(self):
+        """预览生成的谱面"""
+        QtWidgets.QMessageBox.information(self, "功能未实现", "谱面预览功能正在开发中")
 
     def showEvent(self, event):
         """窗口显示时的处理"""
@@ -3436,7 +3687,7 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
                     self.audio_visualizer.update_visualization()
         
         # 更新状态栏以提示用户
-        self.statusBar.showMessage(f"已更新音频源优先级: {' > '.join(current_priority)}", 3000)
+        self.status_bar.showMessage(f"已更新音频源优先级: {' > '.join(current_priority)}", 3000)
 
     def test_audio_sources(self):
         """测试分离的音频源标签与内容是否匹配"""
