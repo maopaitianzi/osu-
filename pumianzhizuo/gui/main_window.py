@@ -44,6 +44,9 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
         # 初始化音频分析器
         self.audio_analyzer = AudioAnalyzer()
         
+        # 设置人声分离默认启用
+        self.audio_analyzer.set_use_source_separation(True)
+        
         # 初始化谱面分析器
         self.beatmap_analyzer = BeatmapAnalyzer()
         
@@ -840,6 +843,9 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
         # 设置初始状态和信号连接
         self.reset_source_priority()
         self.init_training_signals()
+        
+        # 确保可视化器状态与复选框一致
+        self.toggle_visualization(QtCore.Qt.Unchecked)
     
     def setup_model_training_tab(self, tab):
         """设置模型训练选项卡的布局"""
@@ -1250,7 +1256,7 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
         
         # 显示启用可视化的复选框
         self.enable_visualization_cb = QtWidgets.QCheckBox("启用音频可视化 (可能影响性能)")
-        self.enable_visualization_cb.setChecked(True)
+        self.enable_visualization_cb.setChecked(False)
         self.enable_visualization_cb.stateChanged.connect(self.toggle_visualization)
         visualization_layout.addWidget(self.enable_visualization_cb)
         
@@ -1282,7 +1288,7 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
         
         # 启用人声分离复选框
         self.enable_source_separation_cb = QtWidgets.QCheckBox("启用人声分离 (可能显著增加处理时间)")
-        self.enable_source_separation_cb.setChecked(False)
+        self.enable_source_separation_cb.setChecked(True)
         audio_separation_layout.addWidget(self.enable_source_separation_cb)
         
         # 添加模型选择布局
@@ -1774,9 +1780,9 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
         density_row.addWidget(density_label)
         self.density_slider = QtWidgets.QSlider(QtCore.Qt.Horizontal)
         self.density_slider.setRange(1, 10)
-        self.density_slider.setValue(5)
+        self.density_slider.setValue(10)
         self.density_slider.setStyleSheet("QSlider::groove:horizontal { background: #ddd; } QSlider::handle:horizontal { background: #FF66AA; }")
-        self.density_value = QtWidgets.QLabel("5")
+        self.density_value = QtWidgets.QLabel("10")
         density_row.addWidget(self.density_slider)
         density_row.addWidget(self.density_value)
         options_layout.addLayout(density_row)

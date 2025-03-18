@@ -23,7 +23,7 @@ class BeatmapGenerator:
         self.version = "Normal"  # 难度名
         
         # 生成参数
-        self.density = 5  # 谱面密度，1-10
+        self.density = 10  # 谱面密度，1-10
         self.use_model = False  # 是否使用模型优化摆放
         self.model_path = None  # 模型文件路径
         
