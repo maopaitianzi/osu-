@@ -124,7 +124,7 @@ class BeatmapGenerator:
         # 默认短音
         return False
     
-    def _generate_slider(self, start_time, end_time, position):
+    def _generate_slider(self, start_time, end_time, position, source=None):
         """生成滑条"""
         x, y = position
         
@@ -163,17 +163,34 @@ class BeatmapGenerator:
             point2_y = min(max(y + random.randint(-80, 80), 0), self.playfield_height)
             control_points = f"|{point1_x}:{point1_y}|{point2_x}:{point2_y}"
         
+        # 设置音效
+        hitsound = 0
+        addition = "0:0:0:0:"
+        # 如果是鼓点来源，添加clap音效
+        if source == "drums":
+            hitsound = 8  # 8是clap音效的编号
+            addition = "0:0:0:0:"  # 正确的clap音效格式
+        
         # 构建滑条对象
         # 格式：x,y,time,type,hitSound,curveType|curvePoints,slides,length,edgeHitsound,edgeAddition,hitSample
-        hit_object = f"{x},{y},{int(start_time)},2,0,{slider_type}{control_points},1,{int(length)},0:0|0:0,0:0:0:0:"
+        hit_object = f"{x},{y},{int(start_time)},2,{hitsound},{slider_type}{control_points},1,{int(length)},0:0|0:0,{addition}"
         
         return hit_object
     
-    def _generate_circle(self, time, position):
+    def _generate_circle(self, time, position, source=None):
         """生成圆圈"""
         x, y = position
+        
+        # 设置音效
+        hitsound = 0
+        addition = "0:0:0:0:"
+        # 如果是鼓点来源，添加clap音效
+        if source == "drums":
+            hitsound = 8  # 8是clap音效的编号
+            addition = "0:0:0:0:"  # 正确的clap音效格式
+            
         # 格式：x,y,time,type,hitSound,hitSample
-        hit_object = f"{x},{y},{int(time)},1,0,0:0:0:0:"
+        hit_object = f"{x},{y},{int(time)},1,{hitsound},{addition}"
         return hit_object
     
     def generate_beatmap(self):
@@ -276,10 +293,10 @@ class BeatmapGenerator:
             if event.get("is_long", False) and event.get("end_time"):
                 # 生成滑条
                 end_time_ms = int(event["end_time"] * 1000)
-                hit_object = self._generate_slider(time_ms, end_time_ms, position)
+                hit_object = self._generate_slider(time_ms, end_time_ms, position, event.get("source"))
             else:
                 # 生成圆圈
-                hit_object = self._generate_circle(time_ms, position)
+                hit_object = self._generate_circle(time_ms, position, event.get("source"))
             
             self.hit_objects.append(hit_object)
             prev_position = position
