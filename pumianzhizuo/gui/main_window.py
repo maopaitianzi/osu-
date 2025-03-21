@@ -1370,6 +1370,58 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
         self.export_separated_audio_cb.setChecked(False)
         audio_separation_layout.addWidget(self.export_separated_audio_cb)
         
+        # 添加音频降噪设置
+        noise_reduction_group = QtWidgets.QGroupBox("音频降噪设置")
+        noise_reduction_group.setStyleSheet(group_box_style)
+        noise_reduction_layout = QtWidgets.QVBoxLayout(noise_reduction_group)
+        noise_reduction_layout.setContentsMargins(10, 15, 10, 10)  # 调整内边距
+        
+        # 启用音频降噪复选框
+        self.enable_noise_reduction_cb = QtWidgets.QCheckBox("启用音频降噪 (将在人声分离前进行)")
+        self.enable_noise_reduction_cb.setChecked(False)
+        self.enable_noise_reduction_cb.setToolTip("启用此选项将在人声分离前对音频进行降噪处理，可以改善人声分离效果")
+        noise_reduction_layout.addWidget(self.enable_noise_reduction_cb)
+        
+        # 降噪阈值滑块
+        threshold_layout = QtWidgets.QHBoxLayout()
+        threshold_label = QtWidgets.QLabel("降噪阈值:")
+        threshold_label.setToolTip("较低的值会保留更多的原始信号，较高的值会进行更激进的噪声消除")
+        self.noise_threshold_slider = QtWidgets.QSlider(QtCore.Qt.Horizontal)
+        self.noise_threshold_slider.setRange(0, 100)
+        self.noise_threshold_slider.setValue(5)  # 默认值对应0.05
+        self.noise_threshold_slider.setTickPosition(QtWidgets.QSlider.TicksBelow)
+        self.noise_threshold_slider.setTickInterval(10)
+        self.noise_threshold_value = QtWidgets.QLabel("0.05")
+        self.noise_threshold_slider.valueChanged.connect(lambda v: self.noise_threshold_value.setText(f"{v/100:.2f}"))
+        threshold_layout.addWidget(threshold_label)
+        threshold_layout.addWidget(self.noise_threshold_slider)
+        threshold_layout.addWidget(self.noise_threshold_value)
+        noise_reduction_layout.addLayout(threshold_layout)
+        
+        # 降噪强度滑块
+        strength_layout = QtWidgets.QHBoxLayout()
+        strength_label = QtWidgets.QLabel("降噪强度:")
+        strength_label.setToolTip("控制降噪效果的强度，较高的值会移除更多噪声但可能影响音质")
+        self.noise_strength_slider = QtWidgets.QSlider(QtCore.Qt.Horizontal)
+        self.noise_strength_slider.setRange(0, 100)
+        self.noise_strength_slider.setValue(75)  # 默认值对应0.75
+        self.noise_strength_slider.setTickPosition(QtWidgets.QSlider.TicksBelow)
+        self.noise_strength_slider.setTickInterval(10)
+        self.noise_strength_value = QtWidgets.QLabel("0.75")
+        self.noise_strength_slider.valueChanged.connect(lambda v: self.noise_strength_value.setText(f"{v/100:.2f}"))
+        strength_layout.addWidget(strength_label)
+        strength_layout.addWidget(self.noise_strength_slider)
+        strength_layout.addWidget(self.noise_strength_value)
+        noise_reduction_layout.addLayout(strength_layout)
+        
+        # 重置默认值按钮
+        reset_noise_btn = QtWidgets.QPushButton("重置默认值")
+        reset_noise_btn.clicked.connect(self.reset_noise_reduction_params)
+        noise_reduction_layout.addWidget(reset_noise_btn)
+        
+        # 添加噪音减少组到布局
+        settings_layout.addWidget(noise_reduction_group)
+        
         # 添加设置组到滚动区域布局
         settings_layout.addWidget(audio_separation_group)
         settings_layout.addWidget(visualization_group)
@@ -1759,36 +1811,68 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
         
         # 模型选项
         model_row = QtWidgets.QHBoxLayout()
-        self.use_model_checkbox = QtWidgets.QCheckBox("使用模型辅助生成")
-        self.use_model_checkbox.setStyleSheet("QCheckBox { font-weight: bold; }")
-        model_row.addWidget(self.use_model_checkbox)
-        self.select_model_btn = QtWidgets.QPushButton("选择模型")
-        self.select_model_btn.setEnabled(False)
-        self.select_model_btn.setStyleSheet("QPushButton { min-width: 80px; }")
-        model_row.addWidget(self.select_model_btn)
+        self.use_model_cb = QtWidgets.QCheckBox("使用AI优化摆放")
+        self.use_model_cb.setToolTip("使用训练好的AI模型优化物件摆放位置")
+        self.use_model_cb.setEnabled(False)  # 暂时禁用
+        model_row.addWidget(self.use_model_cb)
         options_layout.addLayout(model_row)
         
-        # 启用模型选择
-        self.use_model_checkbox.stateChanged.connect(
-            lambda state: self.select_model_btn.setEnabled(state == QtCore.Qt.Checked)
-        )
+        # 导出选项
+        export_row = QtWidgets.QHBoxLayout()
+        self.auto_open_cb = QtWidgets.QCheckBox("生成后自动打开")
+        self.auto_open_cb.setChecked(True)
+        export_row.addWidget(self.auto_open_cb)
+        options_layout.addLayout(export_row)
         
-        # 生成密度
+        # 密度设置
         density_row = QtWidgets.QHBoxLayout()
-        density_label = QtWidgets.QLabel("生成密度:")
-        density_label.setMinimumWidth(80)
-        density_row.addWidget(density_label)
+        density_row.addWidget(QtWidgets.QLabel("谱面密度:"))
         self.density_slider = QtWidgets.QSlider(QtCore.Qt.Horizontal)
         self.density_slider.setRange(1, 10)
         self.density_slider.setValue(10)
+        self.density_slider.setTickPosition(QtWidgets.QSlider.TicksBelow)
+        self.density_slider.setTickInterval(1)
         self.density_slider.setStyleSheet("QSlider::groove:horizontal { background: #ddd; } QSlider::handle:horizontal { background: #FF66AA; }")
         self.density_value = QtWidgets.QLabel("10")
         density_row.addWidget(self.density_slider)
         density_row.addWidget(self.density_value)
         options_layout.addLayout(density_row)
         
+        # 事件选择概率设置
+        options_layout.addWidget(QtWidgets.QLabel("事件选择概率设置:"))
+        
+        # 节拍点选择概率
+        beat_prob_row = QtWidgets.QHBoxLayout()
+        beat_prob_row.addWidget(QtWidgets.QLabel("节拍点选择概率:"))
+        self.beat_prob_slider = QtWidgets.QSlider(QtCore.Qt.Horizontal)
+        self.beat_prob_slider.setRange(0, 100)
+        self.beat_prob_slider.setValue(30)  # 默认0.3 (30%)
+        self.beat_prob_slider.setTickPosition(QtWidgets.QSlider.TicksBelow)
+        self.beat_prob_slider.setTickInterval(10)
+        self.beat_prob_slider.setStyleSheet("QSlider::groove:horizontal { background: #ddd; } QSlider::handle:horizontal { background: #FF66AA; }")
+        self.beat_prob_value = QtWidgets.QLabel("0.30")
+        beat_prob_row.addWidget(self.beat_prob_slider)
+        beat_prob_row.addWidget(self.beat_prob_value)
+        options_layout.addLayout(beat_prob_row)
+        
+        # 起始点选择概率
+        onset_prob_row = QtWidgets.QHBoxLayout()
+        onset_prob_row.addWidget(QtWidgets.QLabel("起始点选择概率:"))
+        self.onset_prob_slider = QtWidgets.QSlider(QtCore.Qt.Horizontal)
+        self.onset_prob_slider.setRange(0, 100)
+        self.onset_prob_slider.setValue(70)  # 默认0.7 (70%)
+        self.onset_prob_slider.setTickPosition(QtWidgets.QSlider.TicksBelow)
+        self.onset_prob_slider.setTickInterval(10)
+        self.onset_prob_slider.setStyleSheet("QSlider::groove:horizontal { background: #ddd; } QSlider::handle:horizontal { background: #FF66AA; }")
+        self.onset_prob_value = QtWidgets.QLabel("0.70")
+        onset_prob_row.addWidget(self.onset_prob_slider)
+        onset_prob_row.addWidget(self.onset_prob_value)
+        options_layout.addLayout(onset_prob_row)
+        
         # 连接信号
         self.density_slider.valueChanged.connect(lambda v: self.density_value.setText(str(v)))
+        self.beat_prob_slider.valueChanged.connect(lambda v: self.beat_prob_value.setText(f"{v/100:.2f}"))
+        self.onset_prob_slider.valueChanged.connect(lambda v: self.onset_prob_value.setText(f"{v/100:.2f}"))
         
         # 添加填充空间，使选项面板与难度面板高度相同
         options_layout.addStretch(1)
@@ -1947,6 +2031,16 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
         self.audio_analyzer.analysis_complete.connect(self.handle_analysis_complete)
         self.audio_analyzer.analysis_error.connect(self.handle_analysis_error)
         
+        # 配置降噪设置
+        if hasattr(self, 'enable_noise_reduction_cb'):
+            self.audio_analyzer.set_use_noise_reduction(self.enable_noise_reduction_cb.isChecked())
+            
+            # 如果启用了降噪，设置降噪参数
+            if self.enable_noise_reduction_cb.isChecked():
+                threshold = self.noise_threshold_slider.value() / 100.0
+                strength = self.noise_strength_slider.value() / 100.0
+                self.audio_analyzer.set_noise_reduction_params(threshold, strength)
+        
         # 配置人声分离设置
         if hasattr(self, 'enable_source_separation_cb'):
             self.audio_analyzer.set_use_source_separation(self.enable_source_separation_cb.isChecked())
@@ -2005,7 +2099,11 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
         self.progress_bar.setValue(progress)
         
         # 根据进度更新状态文本
-        if progress < 20:
+        if progress < 5:
+            self.status_label.setText("正在处理音频...")
+            if hasattr(self, 'enable_noise_reduction_cb') and self.enable_noise_reduction_cb.isChecked():
+                self.status_label.setText("正在进行音频降噪...")
+        elif progress < 20:
             self.status_label.setText("正在检测BPM和节拍...")
         elif progress < 40:
             self.status_label.setText("正在分析节拍强度...")
@@ -4019,7 +4117,7 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
         cs = self.cs_slider.value()
         
         # 获取生成参数
-        use_model = self.use_model_checkbox.isChecked()
+        use_model = self.use_model_cb.isChecked()
         density = self.density_slider.value()
         
         # 设置状态
@@ -4095,6 +4193,11 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
                 model_path = None
                 
             beatmap_generator.set_generation_params(density, use_model, model_path)
+            
+            # 设置事件选择概率
+            beat_prob = self.beat_prob_slider.value() / 100.0
+            onset_prob = self.onset_prob_slider.value() / 100.0
+            beatmap_generator.set_event_selection_probabilities(beat_prob, onset_prob)
             
             # 分析数据字典，用于存储每个轨道的分析数据
             analysis_data_map = {}
@@ -4340,34 +4443,40 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
                 self.model_combo.addItem("Demucs HT（混合变体）", "htdemucs")
 
     def reset_source_priority(self):
-        """重置音频源优先级为默认顺序"""
-        if hasattr(self, 'priority_list'):
-            # 清空列表
-            self.priority_list.clear()
-            
-            # 默认优先级顺序
-            default_sources = [
-                ("vocals", "人声 (Vocals)"),
-                ("drums", "鼓声 (Drums)"),
-                ("bass", "贝斯 (Bass)"),
-                ("other", "其他乐器 (Other)")
-            ]
-            
-            # 重新添加项目
-            for source_id, display_name in default_sources:
-                item = QtWidgets.QListWidgetItem(display_name)
-                item.setData(QtCore.Qt.UserRole, source_id)
-                # 尝试设置图标，如果图标文件不存在则忽略
-                icon_path = self.get_source_icon_path(source_id)
-                if icon_path and os.path.exists(icon_path):
-                    item.setIcon(QtGui.QIcon(icon_path))
-                self.priority_list.addItem(item)
-            
-            # 触发优先级变更事件
-            self.on_priority_changed()
-
+        """重置音频源优先级到默认顺序"""
+        # 清空现有列表
+        self.priority_list.clear()
+        
+        # 重新添加默认顺序的音频源
+        source_display_names = {
+            "vocals": "人声 (Vocals)",
+            "drums": "鼓声 (Drums)",
+            "bass": "贝斯 (Bass)",
+            "other": "其他乐器 (Other)"
+        }
+        
+        for source_id in self.audio_analyzer.DEFAULT_PRIORITY:
+            display_name = source_display_names.get(source_id, source_id)
+            item = QtWidgets.QListWidgetItem(display_name)
+            item.setData(QtCore.Qt.UserRole, source_id)
+            # 获取图标路径
+            icon_path = self.get_source_icon_path(source_id)
+            if icon_path:
+                item.setIcon(QtGui.QIcon(icon_path))
+            self.priority_list.addItem(item)
+    
+    def reset_noise_reduction_params(self):
+        """重置降噪参数到默认值"""
+        # 重置阈值滑块
+        self.noise_threshold_slider.setValue(5)  # 默认值0.05
+        self.noise_threshold_value.setText("0.05")
+        
+        # 重置强度滑块
+        self.noise_strength_slider.setValue(75)  # 默认值0.75
+        self.noise_strength_value.setText("0.75")
+    
     def get_source_icon_path(self, source_id):
-        """获取音频源的图标路径"""
+        """获取音频源对应的图标路径"""
         icons = {
             "vocals": "gui/resources/vocal_icon.png",
             "drums": "gui/resources/drum_icon.png",

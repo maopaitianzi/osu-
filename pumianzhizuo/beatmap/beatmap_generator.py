@@ -27,6 +27,10 @@ class BeatmapGenerator:
         self.use_model = False  # 是否使用模型优化摆放
         self.model_path = None  # 模型文件路径
         
+        # 事件选择概率
+        self.beat_selection_probability = 0.3  # 节拍点选择概率（默认30%）
+        self.onset_selection_probability = 0.7  # 起始点选择概率（默认70%）
+        
         # 谱面数据
         self.hit_objects = []  # 谱面物件列表
         self.timing_points = []  # 时间点列表
@@ -67,6 +71,18 @@ class BeatmapGenerator:
         self.density = density
         self.use_model = use_model
         self.model_path = model_path
+        
+    def set_event_selection_probabilities(self, beat_prob=0.3, onset_prob=0.7):
+        """
+        设置事件选择概率
+        
+        参数:
+            beat_prob: 节拍点选择概率 (0.0-1.0)
+            onset_prob: 起始点选择概率 (0.0-1.0)
+        """
+        # 确保概率值在有效范围内
+        self.beat_selection_probability = max(0.0, min(1.0, beat_prob))
+        self.onset_selection_probability = max(0.0, min(1.0, onset_prob))
         
     def load_analysis_data(self, analysis_data_map):
         """加载音频分析数据"""
@@ -218,7 +234,7 @@ class BeatmapGenerator:
             if "beat_times" in source_data:
                 beat_times = source_data["beat_times"]
                 for time in beat_times:
-                    if random.random() < 0.3 * (self.density / 5.0):  # 根据密度随机选择部分节拍
+                    if random.random() < self.beat_selection_probability * (self.density / 5.0):  # 使用用户自定义概率
                         events.append({
                             "time": time,
                             "priority": priority,
@@ -230,8 +246,8 @@ class BeatmapGenerator:
             if "onset_times" in source_data:
                 onset_times = source_data["onset_times"]
                 for time in onset_times:
-                    # 根据密度调整事件选择概率
-                    if random.random() < 0.7 * (self.density / 5.0):
+                    # 使用用户自定义概率
+                    if random.random() < self.onset_selection_probability * (self.density / 5.0):
                         is_long = self._is_long_sound(time, source_data)
                         
                         # 如果是长音，查找结束时间

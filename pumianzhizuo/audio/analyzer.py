@@ -99,6 +99,7 @@ class AudioAnalyzer(QtCore.QObject):
     - 过渡点检测（适合osu谱面关键点）
     - GPU加速支持（需要CUDA环境）
     - 人声分离功能（支持多种模型：Demucs v4, MelBand RoFormer, SCNet XL）
+    - 音频降噪功能（在人声分离前对音频降噪）
     """
     
     # 定义信号
@@ -181,8 +182,14 @@ class AudioAnalyzer(QtCore.QObject):
         self.scnetxl_model = None  # SCNet XL模型
         self.current_model = "htdemucs"  # 当前使用的模型名称
         self.active_source = "original"  # 当前活跃的音频源
-        self.source_priority = self.DEFAULT_PRIORITY.copy()  # 源优先级
-        self.separated_sources = {}  # 分离后的音频源
+        self.source_priority = self.DEFAULT_PRIORITY.copy()  # 音频源优先级
+        self.separated_sources = {}  # 分离的音频源
+        
+        # 音频降噪
+        self.use_noise_reduction = False  # 是否使用音频降噪
+        self.noise_threshold = 0.05  # 降噪阈值，默认值0.05
+        self.noise_reduction_strength = 0.75  # 降噪强度，默认值0.75
+        self.denoised_audio = None  # 降噪后的音频
         
         # 线程控制
         self._is_running = False  # 分析是否正在运行
@@ -266,7 +273,18 @@ class AudioAnalyzer(QtCore.QObject):
             self.analysis_error.emit("没有加载音频数据，无法进行分析")
             return {}
         
-        # 如果启用了音频源分离，先进行分离
+        # 如果启用了音频降噪，先进行降噪处理
+        if self.use_noise_reduction:
+            try:
+                self._reduce_noise()
+                # 降噪成功后使用降噪的音频
+                original_audio = self.y  # 保存原始音频
+                self.y = self.denoised_audio  # 使用降噪后的音频
+            except Exception as e:
+                self.analysis_error.emit(f"音频降噪失败: {str(e)}")
+                # 降噪失败则继续使用原始音频
+        
+        # 如果启用了音频源分离，进行分离
         if self.use_source_separation and not self.separated_sources:
             try:
                 self._separate_audio_sources()
@@ -494,11 +512,11 @@ class AudioAnalyzer(QtCore.QObject):
                     # 取最常见的值作为可能的BPM
                     from collections import Counter
                     tempo_counts = Counter(filtered_tempi)
-                    self.tempo = tempo_counts.most_common(1)[0][0]
+                    self.tempo = tempo_counts.most_common(1)[0][0] * 2  # 乘以2
                 else:
-                    self.tempo = int(round(tempo))
+                    self.tempo = int(round(tempo)) * 2  # 乘以2
             else:
-                self.tempo = int(round(tempo))
+                self.tempo = int(round(tempo)) * 2  # 乘以2
             
             # 更新BPM来源
             self.bpm_source = "auto"
@@ -1732,3 +1750,85 @@ class AudioAnalyzer(QtCore.QObject):
                 self.features = original_features
         
         return result 
+
+    def _reduce_noise(self) -> None:
+        """
+        对音频进行降噪处理
+        使用频谱减法和光滑化处理进行降噪
+        """
+        self.analysis_progress.emit(2)
+        
+        # 获取当前音频数据
+        y = self.y
+        sr = self.sr
+        
+        # 转换为单声道如果是立体声
+        if len(y.shape) > 1:
+            y = np.mean(y, axis=0)
+        
+        # 计算短时傅里叶变换 (STFT)
+        hop_length = 256  # 设置较小的hop_length以获得更好的时间分辨率
+        n_fft = 2048  # FFT窗口大小
+        
+        # 计算频谱
+        stft = librosa.stft(y, n_fft=n_fft, hop_length=hop_length)
+        magnitude, phase = librosa.magphase(stft)
+        
+        # 估计噪声配置文件 (使用信号的前几帧，通常是安静的)
+        noise_frames = min(20, magnitude.shape[1] // 10)  # 使用前10%的帧或最多20帧
+        noise_profile = np.mean(magnitude[:, :noise_frames], axis=1, keepdims=True)
+        
+        # 使用频谱减法进行降噪
+        threshold = self.noise_threshold  # 降噪阈值
+        strength = self.noise_reduction_strength  # 降噪强度
+        
+        # 应用降噪 (使用频谱减法)
+        # 根据降噪强度参数调整降噪量
+        magnitude_reduced = np.maximum(
+            magnitude - noise_profile * strength,
+            magnitude * threshold
+        )
+        
+        # 重建STFT
+        stft_reduced = magnitude_reduced * phase
+        
+        # 反STFT得到降噪后的时域信号
+        y_denoised = librosa.istft(stft_reduced, hop_length=hop_length, length=len(y))
+        
+        # 保存降噪后的音频
+        self.denoised_audio = y_denoised
+        
+        # 可选：应用额外的光滑化滤波器
+        if magnitude.shape[1] > 10:  # 确保有足够的帧来应用滤波器
+            y_denoised = scipy.signal.medfilt(y_denoised, kernel_size=3)
+            self.denoised_audio = y_denoised
+        
+        self.analysis_progress.emit(5)
+        print("音频降噪完成")
+    
+    def set_use_noise_reduction(self, enabled: bool) -> None:
+        """
+        设置是否使用音频降噪
+        
+        参数:
+            enabled: 是否启用降噪
+        """
+        self.use_noise_reduction = enabled
+        print(f"音频降噪功能: {'启用' if enabled else '禁用'}")
+        
+        # 如果禁用降噪，清除之前的降噪结果
+        if not enabled:
+            self.denoised_audio = None
+    
+    def set_noise_reduction_params(self, threshold: float = 0.05, strength: float = 0.75) -> None:
+        """
+        设置降噪参数
+        
+        参数:
+            threshold: 降噪阈值 (0.0-1.0)，较低的值会保留更多原始信号
+            strength: 降噪强度 (0.0-1.0)，较高的值会进行更激进的降噪
+        """
+        # 确保参数在有效范围内
+        self.noise_threshold = max(0.0, min(1.0, threshold))
+        self.noise_reduction_strength = max(0.0, min(1.0, strength))
+        print(f"降噪参数已更新: 阈值={self.noise_threshold}, 强度={self.noise_reduction_strength}")
