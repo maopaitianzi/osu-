@@ -1869,6 +1869,38 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
         onset_prob_row.addWidget(self.onset_prob_value)
         options_layout.addLayout(onset_prob_row)
         
+        # 强拍弱拍判定设置
+        strong_beat_row = QtWidgets.QHBoxLayout()
+        strong_beat_row.addWidget(QtWidgets.QLabel("强拍阈值:"))
+        self.strong_beat_input = QtWidgets.QDoubleSpinBox()
+        self.strong_beat_input.setRange(0.001, 1.0)  # 范围0.001-1.0
+        self.strong_beat_input.setSingleStep(0.001)  # 步进值
+        self.strong_beat_input.setDecimals(3)  # 显示3位小数
+        self.strong_beat_input.setValue(0.075)  # 默认值0.075
+        self.strong_beat_input.setFixedWidth(80)
+        self.strong_beat_input.setToolTip("设置强拍判定阈值，当音量高于此值时被判定为强拍")
+        strong_beat_row.addWidget(self.strong_beat_input)
+        strong_beat_row.addStretch(1)
+        options_layout.addLayout(strong_beat_row)
+        
+        # 次强拍阈值
+        medium_beat_row = QtWidgets.QHBoxLayout()
+        medium_beat_row.addWidget(QtWidgets.QLabel("次强拍阈值:"))
+        self.medium_beat_input = QtWidgets.QDoubleSpinBox()
+        self.medium_beat_input.setRange(0.001, 1.0)  # 范围0.001-1.0
+        self.medium_beat_input.setSingleStep(0.001)  # 步进值
+        self.medium_beat_input.setDecimals(3)  # 显示3位小数
+        self.medium_beat_input.setValue(0.025)  # 默认值0.025
+        self.medium_beat_input.setFixedWidth(80)
+        self.medium_beat_input.setToolTip("设置次强拍判定阈值，当音量高于此值但低于强拍阈值时被判定为次强拍")
+        medium_beat_row.addWidget(self.medium_beat_input)
+        medium_beat_row.addStretch(1)
+        options_layout.addLayout(medium_beat_row)
+        
+        # 确保阈值一致性 - 添加验证
+        self.strong_beat_input.valueChanged.connect(self.ensure_threshold_consistency)
+        self.medium_beat_input.valueChanged.connect(self.ensure_threshold_consistency)
+        
         # 连接信号
         self.density_slider.valueChanged.connect(lambda v: self.density_value.setText(str(v)))
         self.beat_prob_slider.valueChanged.connect(lambda v: self.beat_prob_value.setText(f"{v/100:.2f}"))
@@ -4199,6 +4231,17 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
             onset_prob = self.onset_prob_slider.value() / 100.0
             beatmap_generator.set_event_selection_probabilities(beat_prob, onset_prob)
             
+            # 设置强拍弱拍阈值 - 使用数值输入框的值
+            if hasattr(self, 'strong_beat_input') and hasattr(self, 'medium_beat_input'):
+                strong_threshold = self.strong_beat_input.value()
+                medium_threshold = self.medium_beat_input.value()
+            # 向后兼容 - 使用滑动条的值
+            else:
+                strong_threshold = self.strong_beat_slider.value() / 100.0
+                medium_threshold = self.medium_beat_slider.value() / 100.0
+                
+            beatmap_generator.set_beat_strength_thresholds(strong_threshold, medium_threshold)
+            
             # 分析数据字典，用于存储每个轨道的分析数据
             analysis_data_map = {}
             
@@ -4759,6 +4802,31 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
         
         # 调整表格行高
         self.source_table.resizeRowsToContents()
+
+    def ensure_threshold_consistency(self):
+        """确保强拍阈值始终大于次强拍阈值"""
+        # 适配新的数值输入框
+        if hasattr(self, 'strong_beat_input') and hasattr(self, 'medium_beat_input'):
+            strong_value = self.strong_beat_input.value()
+            medium_value = self.medium_beat_input.value()
+            
+            # 如果次强拍阈值大于等于强拍阈值，自动调整
+            if medium_value >= strong_value:
+                # 将次强拍阈值设为强拍阈值的60%
+                new_medium_value = strong_value * 0.6
+                self.medium_beat_input.blockSignals(True)  # 阻止信号触发递归
+                self.medium_beat_input.setValue(new_medium_value)
+                self.medium_beat_input.blockSignals(False)
+        # 保留对旧版滑动条的支持（为向后兼容）
+        elif hasattr(self, 'strong_beat_slider') and hasattr(self, 'medium_beat_slider'):
+            strong_value = self.strong_beat_slider.value()
+            medium_value = self.medium_beat_slider.value()
+            
+            # 如果次强拍阈值大于等于强拍阈值，自动调整
+            if medium_value >= strong_value:
+                # 将次强拍阈值设为强拍阈值的60%
+                new_medium_value = int(strong_value * 0.6)
+                self.medium_beat_slider.setValue(new_medium_value)
 
 def main():
     """程序入口函数"""

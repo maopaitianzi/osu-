@@ -52,6 +52,18 @@ class BeatmapGenerator:
             'catmull': 'C'   # Catmull曲线滑条
         }
         
+        # 音效类型映射
+        self.hitsound_types = {
+            'normal': 0,    # 默认音效
+            'whistle': 2,   # 口哨音效
+            'finish': 4,    # 结束音效
+            'clap': 8       # 拍手音效
+        }
+        
+        # 节拍强度判定阈值
+        self.strong_beat_threshold = 0.7  # 强拍阈值
+        self.medium_beat_threshold = 0.4  # 次强拍阈值
+        
     def set_metadata(self, title, artist, creator, version):
         """设置谱面元数据"""
         self.title = title
@@ -83,6 +95,21 @@ class BeatmapGenerator:
         # 确保概率值在有效范围内
         self.beat_selection_probability = max(0.0, min(1.0, beat_prob))
         self.onset_selection_probability = max(0.0, min(1.0, onset_prob))
+        
+    def set_beat_strength_thresholds(self, strong_threshold=0.7, medium_threshold=0.4):
+        """
+        设置节拍强度判定阈值
+        
+        参数:
+            strong_threshold: 强拍阈值 (0.0-1.0)，高于此值为强拍
+            medium_threshold: 次强拍阈值 (0.0-1.0)，高于此值为次强拍
+        """
+        # 确保阈值在有效范围内
+        self.strong_beat_threshold = max(0.0, min(1.0, strong_threshold))
+        self.medium_beat_threshold = max(0.0, min(1.0, medium_threshold))
+        # 确保强拍阈值大于次强拍阈值
+        if self.medium_beat_threshold >= self.strong_beat_threshold:
+            self.medium_beat_threshold = self.strong_beat_threshold * 0.6
         
     def load_analysis_data(self, analysis_data_map):
         """加载音频分析数据"""
@@ -140,6 +167,116 @@ class BeatmapGenerator:
         # 默认短音
         return False
     
+    def _get_beat_strength_type(self, time, source_data):
+        """
+        判断拍子强度类型，通过音量包络和节拍强度来确定
+        返回: 
+            - "strong": 强拍
+            - "medium": 次强拍
+            - "weak": 弱拍
+        """
+        # 默认为弱拍
+        beat_type = "weak"
+        
+        # 优先使用鼓声音量包络进行判定（深粉色线）
+        # 注意：确保使用的是音量包络（深粉色线），而非波形图（浅粉色线）
+        drums_envelope = None
+        
+        # 首先查找专门的鼓声音量envelope
+        if "drums_volume" in source_data:
+            drums_envelope = source_data["drums_volume"]
+        elif "drums_envelope" in source_data:
+            drums_envelope = source_data["drums_envelope"]
+        elif "spectral_drums" in source_data and "energy" in source_data["spectral_drums"]:
+            drums_envelope = source_data["spectral_drums"]["energy"]
+        
+        # 如果没有找到鼓声专用的音量数据，再尝试使用常规音量包络
+        if drums_envelope is None:
+            if "volume_envelope" in source_data:
+                drums_envelope = source_data["volume_envelope"]
+            elif "spectral_contrast" in source_data:
+                # 使用频谱对比度的低频段作为鼓声能量估计
+                if isinstance(source_data["spectral_contrast"], dict) and "sub_band" in source_data["spectral_contrast"]:
+                    drums_envelope = source_data["spectral_contrast"]["sub_band"]
+        
+        # 根据音量包络判断拍子强度
+        if drums_envelope is not None:
+            volume = None
+            
+            # 字典格式的音量包络（带时间和值）
+            if isinstance(drums_envelope, dict) and "times" in drums_envelope and "values" in drums_envelope:
+                times = drums_envelope["times"]
+                values = drums_envelope["values"]
+                
+                # 找到最接近的时间点
+                closest_idx = None
+                min_diff = 0.1  # 100ms以内认为是同一时间点
+                
+                for i, env_time in enumerate(times):
+                    diff = abs(time - env_time)
+                    if diff < min_diff:
+                        min_diff = diff
+                        closest_idx = i
+                
+                # 获取对应的音量值
+                if closest_idx is not None and closest_idx < len(values):
+                    volume = values[closest_idx]
+            
+            # 列表格式的音量包络（均匀采样）
+            elif isinstance(drums_envelope, list) and len(drums_envelope) > 0:
+                if "duration" in source_data:
+                    duration = source_data["duration"]
+                    sample_rate = len(drums_envelope) / duration
+                    
+                    # 计算时间对应的索引
+                    time_idx = int(time * sample_rate)
+                    if 0 <= time_idx < len(drums_envelope):
+                        volume = drums_envelope[time_idx]
+            
+            # 根据音量值判断拍子强度
+            if volume is not None:
+                # 使用可配置的阈值
+                if volume > self.strong_beat_threshold:
+                    beat_type = "strong"
+                elif volume > self.medium_beat_threshold:
+                    beat_type = "medium"
+                # 否则保持弱拍
+                
+                # 打印调试信息，帮助用户确认判定结果
+                # print(f"时间点: {time:.3f}s, 音量值: {volume:.5f}, 判定为: {beat_type}")
+        
+        # 如果没有音量包络或未能确定强度，回退到使用节拍强度信息
+        if beat_type == "weak" and "beat_times" in source_data and "beat_strength" in source_data:
+            beat_times = source_data["beat_times"]
+            beat_strength = source_data["beat_strength"]
+            
+            # 找到最接近的节拍
+            closest_idx = None
+            min_diff = 0.1  # 100ms以内认为是同一拍
+            
+            for i, beat_time in enumerate(beat_times):
+                diff = abs(time - beat_time)
+                if diff < min_diff:
+                    min_diff = diff
+                    closest_idx = i
+            
+            # 如果找到匹配的节拍，判断强度
+            if closest_idx is not None and closest_idx < len(beat_strength):
+                strength = beat_strength[closest_idx]
+                
+                # 使用可配置的阈值
+                if strength > self.strong_beat_threshold:
+                    beat_type = "strong"
+                elif strength > self.medium_beat_threshold:
+                    beat_type = "medium"
+                # 其他情况保持弱拍
+                
+                # 也检查这个节拍是否在强拍列表中
+                if "strong_beats" in source_data and closest_idx in source_data.get("strong_beats", []):
+                    beat_type = "strong"
+        
+        return beat_type
+    
     def _generate_slider(self, start_time, end_time, position, source=None):
         """生成滑条"""
         x, y = position
@@ -182,10 +319,32 @@ class BeatmapGenerator:
         # 设置音效
         hitsound = 0
         addition = "0:0:0:0:"
-        # 如果是鼓点来源，添加clap音效
+        
+        # 根据来源和拍子强度设置音效
         if source == "drums":
-            hitsound = 8  # 8是clap音效的编号
-            addition = "0:0:0:0:"  # 正确的clap音效格式
+            # 获取当前拍子的强度类型
+            source_data = {}
+            for src_id, src_info in self.analysis_data_map.items():
+                if src_id == source:
+                    source_data = src_info["data"]
+                    break
+            
+            beat_type = self._get_beat_strength_type(start_time/1000, source_data)
+            
+            # 根据拍子强度设置不同的音效
+            if beat_type == "strong":
+                # 强拍: clap + whistle (移除finish音效)
+                hitsound = self.hitsound_types['clap'] + self.hitsound_types['whistle']
+                # 强拍音量100%
+                addition = "0:0:0:100:"
+            elif beat_type == "medium":
+                # 次强拍: clap
+                hitsound = self.hitsound_types['clap']
+                # 次强拍音量50%
+                addition = "0:0:0:80:"
+            else:
+                # 弱拍: whistle
+                hitsound = self.hitsound_types['whistle']
         
         # 构建滑条对象
         # 格式：x,y,time,type,hitSound,curveType|curvePoints,slides,length,edgeHitsound,edgeAddition,hitSample
@@ -200,10 +359,32 @@ class BeatmapGenerator:
         # 设置音效
         hitsound = 0
         addition = "0:0:0:0:"
-        # 如果是鼓点来源，添加clap音效
+        
+        # 根据来源和拍子强度设置音效
         if source == "drums":
-            hitsound = 8  # 8是clap音效的编号
-            addition = "0:0:0:0:"  # 正确的clap音效格式
+            # 获取当前拍子的强度类型
+            source_data = {}
+            for src_id, src_info in self.analysis_data_map.items():
+                if src_id == source:
+                    source_data = src_info["data"]
+                    break
+            
+            beat_type = self._get_beat_strength_type(time/1000, source_data)
+            
+            # 根据拍子强度设置不同的音效
+            if beat_type == "strong":
+                # 强拍: clap + whistle (移除finish音效)
+                hitsound = self.hitsound_types['clap'] + self.hitsound_types['whistle']
+                # 强拍音量100%
+                addition = "0:0:0:100:"
+            elif beat_type == "medium":
+                # 次强拍: clap
+                hitsound = self.hitsound_types['clap']
+                # 次强拍音量50%
+                addition = "0:0:0:50:"
+            else:
+                # 弱拍: whistle
+                hitsound = self.hitsound_types['whistle']
             
         # 格式：x,y,time,type,hitSound,hitSample
         hit_object = f"{x},{y},{int(time)},1,{hitsound},{addition}"

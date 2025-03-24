@@ -690,10 +690,28 @@ class AudioAnalyzer(QtCore.QObject):
             smoothed_rms = rms
             smoothed_times = times
         
-        # 存储音量包络数据
+        # 计算RMS能量统计信息
+        min_rms = np.min(smoothed_rms)
+        max_rms = np.max(smoothed_rms)
+        mean_rms = np.mean(smoothed_rms)
+        
+        # 打印调试信息
+        print(f"音量包络统计 (Source: {self.active_source}):")
+        print(f"  - 最小值: {min_rms:.5f}")
+        print(f"  - 最大值: {max_rms:.5f}")
+        print(f"  - 平均值: {mean_rms:.5f}")
+        print(f"  - 建议强拍阈值: {mean_rms + (max_rms - mean_rms) * 0.6:.5f}")
+        print(f"  - 建议次强拍阈值: {mean_rms + (max_rms - mean_rms) * 0.2:.5f}")
+        
+        # 存储音量包络数据 - 保存原始值，不进行归一化
         self.volume_envelope = {
             "times": smoothed_times.tolist(),
-            "rms": smoothed_rms.tolist()
+            "values": smoothed_rms.tolist(),
+            "min": float(min_rms),
+            "max": float(max_rms),
+            "mean": float(mean_rms),
+            "suggested_strong_threshold": float(mean_rms + (max_rms - mean_rms) * 0.6),
+            "suggested_medium_threshold": float(mean_rms + (max_rms - mean_rms) * 0.2)
         }
         
         # 检测音量突变点（可能的过渡点）
@@ -961,32 +979,28 @@ class AudioAnalyzer(QtCore.QObject):
     
     def get_energy_points(self, threshold: float = 0.75) -> List[float]:
         """
-        获取能量高于阈值的时间点，适合放置osu谱面中的物件
+        获取高能量点，通常对应于可能的节拍点
         
         参数:
-            threshold: 能量阈值 (0-1)
+            threshold: 能量阈值 (0.0-1.0)
             
         返回:
-            高能量时间点列表
+            List[float]: 高能量点的时间列表（秒）
         """
-        if not hasattr(self, 'volume_envelope') or not self.volume_envelope:
+        if self.volume_envelope is None:
+            self._extract_volume_envelope()
+            
+        if self.volume_envelope is None:
             return []
-        
+            
         volume_data = self.volume_envelope
         times = volume_data["times"]
-        rms = volume_data["rms"]
-        
-        # 归一化RMS
-        max_rms = max(rms)
-        if max_rms > 0:
-            normalized_rms = [r / max_rms for r in rms]
-        else:
-            normalized_rms = rms
+        values = volume_data["values"]  # 使用正确的字段名
         
         # 找出高于阈值的时间点
         energy_points = [
             times[i] for i in range(len(times))
-            if normalized_rms[i] > threshold
+            if values[i] > threshold
         ]
         
         return energy_points
@@ -1150,6 +1164,14 @@ class AudioAnalyzer(QtCore.QObject):
             export_data["spectral"] = self.spectral_features
             
         if hasattr(self, 'volume_envelope') and self.volume_envelope:
+            # 使用正确的字段名导出音量包络
+            export_data["volume_envelope"] = self.volume_envelope
+            
+            # 如果当前源是鼓声，也添加drums_volume字段
+            if self.active_source == "drums":
+                export_data["drums_volume"] = self.volume_envelope
+            
+            # 保留原有的volume字段以保持向后兼容
             export_data["volume"] = self.volume_envelope
             
         if hasattr(self, 'volume_changes') and self.volume_changes:
@@ -1729,6 +1751,22 @@ class AudioAnalyzer(QtCore.QObject):
                     temp_features["display_name"] = display_name
                     temp_features["analysis_time"] = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                     
+                    # 确保正确添加音量包络数据，使用适当的字段名
+                    if "volume_envelope" in temp_features:
+                        # 保留原有的volume字段
+                        temp_features["volume"] = temp_features["volume_envelope"]
+                        
+                        # 如果当前源是鼓声，添加drums_volume字段
+                        if source_name == "drums":
+                            temp_features["drums_volume"] = temp_features["volume_envelope"]
+                    elif "volume" in temp_features:
+                        # 确保也存在volume_envelope字段
+                        temp_features["volume_envelope"] = temp_features["volume"]
+                        
+                        # 如果当前源是鼓声，添加drums_volume字段
+                        if source_name == "drums":
+                            temp_features["drums_volume"] = temp_features["volume"]
+                    
                     json.dump(temp_features, f, cls=NumpyEncoder, ensure_ascii=False, indent=2)
                 
                 # 记录文件路径
@@ -1832,3 +1870,21 @@ class AudioAnalyzer(QtCore.QObject):
         self.noise_threshold = max(0.0, min(1.0, threshold))
         self.noise_reduction_strength = max(0.0, min(1.0, strength))
         print(f"降噪参数已更新: 阈值={self.noise_threshold}, 强度={self.noise_reduction_strength}")
+    
+    def _detecting_beats_and_energy_points(self, threshold: float = 0.15) -> None:
+        """检测高能量点，通常对应于可能的节拍点"""
+        if self.volume_envelope is None:
+            return
+        
+        volume_data = self.volume_envelope
+        times = volume_data["times"]
+        values = volume_data["values"]  # 使用正确的字段名
+        
+        # 找出高于阈值的时间点
+        energy_points = [
+            times[i] for i in range(len(times))
+            if values[i] > threshold
+        ]
+        
+        # 存储能量点
+        self.energy_points = energy_points
