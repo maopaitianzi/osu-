@@ -340,7 +340,7 @@ class BeatmapGenerator:
             elif beat_type == "medium":
                 # 次强拍: clap
                 hitsound = self.hitsound_types['clap']
-                # 次强拍音量50%
+                # 次强拍音量80%
                 addition = "0:0:0:80:"
             else:
                 # 弱拍: whistle
@@ -380,8 +380,8 @@ class BeatmapGenerator:
             elif beat_type == "medium":
                 # 次强拍: clap
                 hitsound = self.hitsound_types['clap']
-                # 次强拍音量50%
-                addition = "0:0:0:50:"
+                # 次强拍音量80%
+                addition = "0:0:0:80:"
             else:
                 # 弱拍: whistle
                 hitsound = self.hitsound_types['whistle']
