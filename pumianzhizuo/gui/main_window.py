@@ -231,6 +231,10 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
         model_training_tab = QtWidgets.QWidget()
         tab_widget.addTab(model_training_tab, "模型训练")
         
+        # 创建"字幕处理"选项卡
+        subtitle_tab = QtWidgets.QWidget()
+        tab_widget.addTab(subtitle_tab, "字幕处理")
+        
         # 创建"设置"选项卡
         settings_tab = QtWidgets.QWidget()
         tab_widget.addTab(settings_tab, "设置")
@@ -835,6 +839,9 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
         # 设置"谱面生成"选项卡的布局
         self.setup_beatmap_generate_tab(beatmap_generate_tab)
         
+        # 设置"字幕处理"选项卡的布局
+        self.setup_subtitle_tab(subtitle_tab)
+        
         # 设置状态栏
         self.status_bar = self.statusBar()
         self.status_label = QtWidgets.QLabel("就绪")
@@ -1138,7 +1145,7 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
         # 创建主布局
         layout = QtWidgets.QVBoxLayout(tab)
         layout.addWidget(training_scroll_area)
-        
+    
     def setup_settings_tab(self, tab):
         """设置设置选项卡的布局"""
         # 设置分组框标题样式
@@ -1434,6 +1441,161 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
         # 创建主布局
         layout = QtWidgets.QVBoxLayout(tab)
         layout.addWidget(settings_scroll_area)
+    
+    def setup_subtitle_tab(self, tab):
+        """设置字幕处理选项卡的布局"""
+        # 创建滚动区域
+        scroll_area = QtWidgets.QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setFrameShape(QtWidgets.QFrame.NoFrame)
+        
+        # 创建滚动区域内容窗口
+        scroll_content = QtWidgets.QWidget()
+        main_layout = QtWidgets.QVBoxLayout(scroll_content)
+        main_layout.setSpacing(15)
+        
+        # 分组框样式
+        group_box_style = """
+        QGroupBox {
+            font-weight: bold;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            margin-top: 15px;
+            padding-top: 16px;
+        }
+        QGroupBox::title {
+            subcontrol-origin: margin;
+            subcontrol-position: top center; /* 居中显示 */
+            color: white; /* 白色文字 */
+            background-color: #FF66AA; /* 粉色背景 */
+            padding: 2px 15px;
+            border-radius: 3px;
+        }
+        """
+        
+        # 创建顶部区域 - 字幕文件选择
+        subtitle_group = QtWidgets.QGroupBox("字幕文件")
+        subtitle_group.setStyleSheet(group_box_style)
+        subtitle_layout = QtWidgets.QVBoxLayout(subtitle_group)
+        subtitle_layout.setContentsMargins(15, 20, 15, 15)
+        
+        # 创建输入字幕文件选择区域
+        input_subtitle_layout = QtWidgets.QHBoxLayout()
+        input_subtitle_label = QtWidgets.QLabel("输入字幕文件:")
+        self.input_subtitle_path = QtWidgets.QLineEdit()
+        self.input_subtitle_path.setPlaceholderText("请选择输入字幕文件(.srt)...")
+        browse_input_subtitle_btn = QtWidgets.QPushButton("浏览")
+        browse_input_subtitle_btn.clicked.connect(self.browse_input_subtitle)
+        
+        input_subtitle_layout.addWidget(input_subtitle_label)
+        input_subtitle_layout.addWidget(self.input_subtitle_path)
+        input_subtitle_layout.addWidget(browse_input_subtitle_btn)
+        
+        # 创建输出字幕文件选择区域
+        output_subtitle_layout = QtWidgets.QHBoxLayout()
+        output_subtitle_label = QtWidgets.QLabel("输出字幕文件:")
+        self.output_subtitle_path = QtWidgets.QLineEdit()
+        self.output_subtitle_path.setPlaceholderText("请选择输出字幕文件(.srt)...")
+        browse_output_subtitle_btn = QtWidgets.QPushButton("浏览")
+        browse_output_subtitle_btn.clicked.connect(self.browse_output_subtitle)
+        
+        output_subtitle_layout.addWidget(output_subtitle_label)
+        output_subtitle_layout.addWidget(self.output_subtitle_path)
+        output_subtitle_layout.addWidget(browse_output_subtitle_btn)
+        
+        # 添加到字幕文件组中
+        subtitle_layout.addLayout(input_subtitle_layout)
+        subtitle_layout.addLayout(output_subtitle_layout)
+        
+        # 创建字幕处理选项区域
+        options_group = QtWidgets.QGroupBox("处理选项")
+        options_group.setStyleSheet(group_box_style)
+        options_layout = QtWidgets.QVBoxLayout(options_group)
+        options_layout.setContentsMargins(15, 20, 15, 15)
+        
+        # 创建中文提取选项
+        self.extract_chinese_cb = QtWidgets.QCheckBox("提取中文字幕")
+        self.extract_chinese_cb.setChecked(True)
+        self.extract_chinese_cb.setToolTip("从双语字幕中提取中文部分")
+        options_layout.addWidget(self.extract_chinese_cb)
+        
+        # 创建合并相近字幕选项
+        self.merge_nearby_cb = QtWidgets.QCheckBox("合并相近字幕")
+        self.merge_nearby_cb.setChecked(True)
+        self.merge_nearby_cb.setToolTip("合并相近的重复字幕内容")
+        options_layout.addWidget(self.merge_nearby_cb)
+        
+        # 添加合并时间阈值设置
+        merge_threshold_layout = QtWidgets.QHBoxLayout()
+        merge_threshold_label = QtWidgets.QLabel("合并时间阈值(秒):")
+        self.merge_threshold_spin = QtWidgets.QDoubleSpinBox()
+        self.merge_threshold_spin.setRange(0.1, 5.0)
+        self.merge_threshold_spin.setValue(0.5)
+        self.merge_threshold_spin.setSingleStep(0.1)
+        self.merge_threshold_spin.setDecimals(1)
+        self.merge_threshold_spin.setEnabled(self.merge_nearby_cb.isChecked())
+        self.merge_nearby_cb.toggled.connect(self.merge_threshold_spin.setEnabled)
+        
+        merge_threshold_layout.addWidget(merge_threshold_label)
+        merge_threshold_layout.addWidget(self.merge_threshold_spin)
+        merge_threshold_layout.addStretch()
+        options_layout.addLayout(merge_threshold_layout)
+        
+        # 添加字幕预览区域
+        preview_group = QtWidgets.QGroupBox("字幕预览")
+        preview_group.setStyleSheet(group_box_style)
+        preview_layout = QtWidgets.QVBoxLayout(preview_group)
+        preview_layout.setContentsMargins(15, 20, 15, 15)
+        
+        self.subtitle_preview = QtWidgets.QTextEdit()
+        self.subtitle_preview.setReadOnly(True)
+        self.subtitle_preview.setPlaceholderText("处理后的字幕将显示在这里...")
+        self.subtitle_preview.setMinimumHeight(200)
+        preview_layout.addWidget(self.subtitle_preview)
+        
+        # 底部区域 - 操作按钮和状态
+        buttons_layout = QtWidgets.QHBoxLayout()
+        buttons_layout.addStretch(1)
+        
+        self.process_subtitle_btn = QtWidgets.QPushButton("处理字幕")
+        self.process_subtitle_btn.setMinimumWidth(150)
+        self.process_subtitle_btn.setMinimumHeight(30)
+        self.process_subtitle_btn.setStyleSheet("QPushButton { background-color: #FF66AA; color: white; font-weight: bold; }")
+        self.process_subtitle_btn.clicked.connect(self.process_subtitle)
+        buttons_layout.addWidget(self.process_subtitle_btn)
+        
+        self.preview_subtitle_btn = QtWidgets.QPushButton("预览字幕")
+        self.preview_subtitle_btn.setMinimumWidth(150)
+        self.preview_subtitle_btn.setMinimumHeight(30)
+        self.preview_subtitle_btn.clicked.connect(self.preview_subtitle)
+        self.preview_subtitle_btn.setEnabled(False)
+        buttons_layout.addWidget(self.preview_subtitle_btn)
+        
+        buttons_layout.addStretch(1)
+        
+        # 状态显示
+        status_layout = QtWidgets.QHBoxLayout()
+        self.subtitle_status_label = QtWidgets.QLabel("就绪")
+        self.subtitle_progress_bar = QtWidgets.QProgressBar()
+        self.subtitle_progress_bar.setTextVisible(True)
+        self.subtitle_progress_bar.setValue(0)
+        
+        status_layout.addWidget(self.subtitle_status_label, 1)
+        status_layout.addWidget(self.subtitle_progress_bar, 2)
+        
+        # 将所有组件添加到主布局
+        main_layout.addWidget(subtitle_group)
+        main_layout.addWidget(options_group)
+        main_layout.addWidget(preview_group)
+        main_layout.addLayout(buttons_layout)
+        main_layout.addLayout(status_layout)
+        
+        # 设置滚动区域的内容并添加到主布局
+        scroll_area.setWidget(scroll_content)
+        
+        # 创建主布局
+        layout = QtWidgets.QVBoxLayout(tab)
+        layout.addWidget(scroll_area)
     
     def setup_beatmap_generate_tab(self, tab):
         """设置谱面生成选项卡的布局"""
@@ -4827,6 +4989,233 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
                 # 将次强拍阈值设为强拍阈值的60%
                 new_medium_value = int(strong_value * 0.6)
                 self.medium_beat_slider.setValue(new_medium_value)
+
+    def browse_input_subtitle(self):
+        """浏览选择输入字幕文件"""
+        file_path, _ = QtWidgets.QFileDialog.getOpenFileName(
+            self, "选择输入字幕文件", "", "字幕文件 (*.srt)"
+        )
+        if file_path:
+            self.input_subtitle_path.setText(file_path)
+            # 自动设置输出文件路径
+            if not self.output_subtitle_path.text():
+                input_path = file_path
+                file_name = os.path.basename(input_path)
+                file_dir = os.path.dirname(input_path)
+                base_name, ext = os.path.splitext(file_name)
+                output_path = os.path.join(file_dir, f"{base_name}_中文{ext}")
+                self.output_subtitle_path.setText(output_path)
+
+    def browse_output_subtitle(self):
+        """浏览选择输出字幕文件"""
+        file_path, _ = QtWidgets.QFileDialog.getSaveFileName(
+            self, "选择输出字幕文件", "", "字幕文件 (*.srt)"
+        )
+        if file_path:
+            self.output_subtitle_path.setText(file_path)
+
+    def process_subtitle(self):
+        """处理字幕"""
+        # 获取输入和输出文件路径
+        input_path = self.input_subtitle_path.text()
+        output_path = self.output_subtitle_path.text()
+        
+        # 检查输入文件
+        if not input_path or not os.path.exists(input_path):
+            QtWidgets.QMessageBox.warning(self, "错误", "请选择有效的输入字幕文件")
+            return
+        
+        # 检查输出文件路径
+        if not output_path:
+            QtWidgets.QMessageBox.warning(self, "错误", "请指定输出字幕文件路径")
+            return
+        
+        # 获取处理选项
+        extract_chinese = self.extract_chinese_cb.isChecked()
+        merge_nearby = self.merge_nearby_cb.isChecked()
+        merge_threshold = self.merge_threshold_spin.value()
+        
+        # 设置进度条初始状态
+        self.subtitle_progress_bar.setValue(10)
+        self.subtitle_status_label.setText("正在处理字幕...")
+        
+        try:
+            # 导入必要的模块
+            import re
+            
+            # 定义函数来提取中文文本
+            def extract_chinese_text(line):
+                # 匹配<b>标签中的中文文本
+                pattern = r'<b>\s*​?\s*​?(.*?)​?\s*​?\s*</b>'
+                match = re.search(pattern, line)
+                if match:
+                    return match.group(1).strip()
+                return None
+            
+            # 定义解析时间的函数
+            def parse_time(time_str):
+                # 解析时间格式为秒数，便于比较
+                hours, minutes, rest = time_str.split(':', 2)
+                seconds, milliseconds = rest.split(',')
+                return int(hours) * 3600 + int(minutes) * 60 + int(seconds) + int(milliseconds) / 1000
+            
+            # 定义时间格式化函数
+            def format_time(seconds):
+                # 将秒数转换回SRT时间格式
+                hours = int(seconds // 3600)
+                minutes = int((seconds % 3600) // 60)
+                seconds_part = seconds % 60
+                seconds_int = int(seconds_part)
+                milliseconds = int((seconds_part - seconds_int) * 1000)
+                return f"{hours:01d}:{minutes:02d}:{seconds_int:02d},{milliseconds:03d}"
+            
+            # 打开并读取字幕文件
+            with open(input_path, 'r', encoding='utf-8') as f:
+                lines = f.readlines()
+                
+            # 更新进度条
+            self.subtitle_progress_bar.setValue(30)
+            self.subtitle_status_label.setText("分析字幕内容...")
+            
+            subtitle_dict = {}  # 用于存储唯一文本的字幕
+            current_index = None
+            current_timestamp = None
+            current_start_time = None
+            current_end_time = None
+            
+            i = 0
+            while i < len(lines):
+                line = lines[i].strip()
+                
+                # 字幕索引
+                if line.isdigit():
+                    current_index = int(line)
+                    i += 1
+                    continue
+                
+                # 时间戳
+                if '-->' in line:
+                    current_timestamp = line
+                    time_parts = line.split(' --> ')
+                    current_start_time = parse_time(time_parts[0])
+                    current_end_time = parse_time(time_parts[1])
+                    i += 1
+                    continue
+                
+                # 字幕文本
+                if extract_chinese and '<font' in line and current_start_time is not None:
+                    chinese_text = extract_chinese_text(line)
+                    if chinese_text:
+                        # 使用文本作为键，确保相同文本只处理一次
+                        if chinese_text not in subtitle_dict:
+                            subtitle_dict[chinese_text] = {
+                                'start_times': [current_start_time],
+                                'end_times': [current_end_time]
+                            }
+                        elif merge_nearby:
+                            # 检查是否与上一个时间段连续或重叠
+                            last_end = subtitle_dict[chinese_text]['end_times'][-1]
+                            if current_start_time <= last_end or abs(current_start_time - last_end) < merge_threshold:
+                                # 更新结束时间为较大的值
+                                subtitle_dict[chinese_text]['end_times'][-1] = max(current_end_time, last_end)
+                            else:
+                                # 添加新的时间段
+                                subtitle_dict[chinese_text]['start_times'].append(current_start_time)
+                                subtitle_dict[chinese_text]['end_times'].append(current_end_time)
+                # 不提取中文，直接处理
+                elif not extract_chinese and line and line != "<font face=\"Sans Serif\" size=\"18\">" and line != "</font>" and current_start_time is not None:
+                    if line not in subtitle_dict:
+                        subtitle_dict[line] = {
+                            'start_times': [current_start_time],
+                            'end_times': [current_end_time]
+                        }
+                    elif merge_nearby:
+                        # 检查是否与上一个时间段连续或重叠
+                        last_end = subtitle_dict[line]['end_times'][-1]
+                        if current_start_time <= last_end or abs(current_start_time - last_end) < merge_threshold:
+                            # 更新结束时间为较大的值
+                            subtitle_dict[line]['end_times'][-1] = max(current_end_time, last_end)
+                        else:
+                            # 添加新的时间段
+                            subtitle_dict[line]['start_times'].append(current_start_time)
+                            subtitle_dict[line]['end_times'].append(current_end_time)
+                
+                i += 1
+            
+            # 更新进度条
+            self.subtitle_progress_bar.setValue(60)
+            self.subtitle_status_label.setText("生成处理后的字幕...")
+            
+            # 将处理后的字幕写入输出文件
+            preview_text = ""
+            with open(output_path, 'w', encoding='utf-8') as f:
+                index = 1
+                for text, times in subtitle_dict.items():
+                    for i in range(len(times['start_times'])):
+                        start_formatted = format_time(times['start_times'][i])
+                        end_formatted = format_time(times['end_times'][i])
+                        
+                        f.write(f"{index}\n")
+                        f.write(f"{start_formatted} --> {end_formatted}\n")
+                        f.write(f"{text}\n\n")
+                        
+                        # 为预览添加内容（最多显示前10个字幕）
+                        if index <= 10:
+                            preview_text += f"{index}\n{start_formatted} --> {end_formatted}\n{text}\n\n"
+                        
+                        index += 1
+            
+            # 更新进度条和状态
+            self.subtitle_progress_bar.setValue(100)
+            self.subtitle_status_label.setText(f"处理完成，共生成了{index-1}个字幕")
+            
+            # 更新预览文本
+            if preview_text:
+                self.subtitle_preview.setText(preview_text)
+                if index > 10:
+                    self.subtitle_preview.append("...(更多字幕已省略)...")
+            else:
+                self.subtitle_preview.setText("(没有找到可处理的字幕)")
+            
+            # 启用预览按钮
+            self.preview_subtitle_btn.setEnabled(True)
+            
+            # 显示成功消息
+            QtWidgets.QMessageBox.information(
+                self, 
+                "处理完成", 
+                f"字幕处理完成！\n输出文件：{output_path}\n共处理了{index-1}个字幕"
+            )
+            
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            self.subtitle_status_label.setText(f"处理失败: {str(e)}")
+            self.subtitle_progress_bar.setValue(0)
+            QtWidgets.QMessageBox.critical(self, "错误", f"字幕处理失败: {str(e)}")
+
+    def preview_subtitle(self):
+        """预览处理后的字幕文件"""
+        output_path = self.output_subtitle_path.text()
+        
+        if not output_path or not os.path.exists(output_path):
+            QtWidgets.QMessageBox.warning(self, "文件不存在", "输出字幕文件不存在，请先处理字幕")
+            return
+        
+        # 使用系统默认程序打开字幕文件
+        try:
+            import subprocess
+            import platform
+            
+            system = platform.system()
+            if system == 'Windows':
+                os.startfile(output_path)
+            elif system == 'Darwin':  # macOS
+                subprocess.call(['open', output_path])
+            else:  # Linux
+                subprocess.call(['xdg-open', output_path])
+        except Exception as e:
+            QtWidgets.QMessageBox.warning(self, "打开失败", f"无法打开字幕文件: {str(e)}")
 
 def main():
     """程序入口函数"""
