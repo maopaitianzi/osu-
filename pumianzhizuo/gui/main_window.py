@@ -29,6 +29,15 @@ from beatmap.analyzer import BeatmapAnalyzer
 # 在import部分添加以下导入
 from gui.training_thread import TrainingThread
 
+# 导入视频生成模块
+try:
+    sys.path.append(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "shipingshengcheng"))
+    from osu_to_vsrg import OsuParser, VSRGRenderer, create_vsrg_video
+    VIDEO_GEN_AVAILABLE = True
+except ImportError:
+    VIDEO_GEN_AVAILABLE = False
+    print("警告: 未找到视频生成模块，视频生成功能将不可用")
+
 
 class OsuStyleMainWindow(QtWidgets.QMainWindow):
     """osu!风格的主窗口类"""
@@ -234,6 +243,10 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
         # 创建"字幕处理"选项卡
         subtitle_tab = QtWidgets.QWidget()
         tab_widget.addTab(subtitle_tab, "字幕处理")
+        
+        # 创建"视频生成"选项卡
+        video_generate_tab = QtWidgets.QWidget()
+        tab_widget.addTab(video_generate_tab, "视频生成")
         
         # 创建"设置"选项卡
         settings_tab = QtWidgets.QWidget()
@@ -841,6 +854,9 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
         
         # 设置"字幕处理"选项卡的布局
         self.setup_subtitle_tab(subtitle_tab)
+        
+        # 设置"视频生成"选项卡的布局
+        self.setup_video_generate_tab(video_generate_tab)
         
         # 设置状态栏
         self.status_bar = self.statusBar()
@@ -2188,6 +2204,241 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
         # 主布局
         layout = QtWidgets.QVBoxLayout(tab)
         layout.addWidget(scroll_area)
+    
+    def setup_video_generate_tab(self, tab):
+        """设置视频生成选项卡的布局"""
+        # 创建滚动区域
+        scroll_area = QtWidgets.QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setFrameShape(QtWidgets.QFrame.NoFrame)
+        
+        # 创建滚动区域内容窗口
+        scroll_content = QtWidgets.QWidget()
+        main_layout = QtWidgets.QVBoxLayout(scroll_content)
+        main_layout.setSpacing(15)
+        
+        # 创建顶部区域 - 文件选择
+        file_group = QtWidgets.QGroupBox("谱面文件")
+        file_group.setStyleSheet("""
+            QGroupBox {
+                font-weight: bold;
+                border: 1px solid #ddd;
+                border-radius: 5px;
+                margin-top: 15px;
+                padding-top: 16px;
+            }
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                subcontrol-position: top center; /* 居中显示 */
+                color: white; /* 白色文字 */
+                background-color: #FF66AA; /* 粉色背景 */
+                padding: 2px 15px;
+                border-radius: 3px;
+            }
+        """)
+        file_layout = QtWidgets.QVBoxLayout(file_group)
+        file_layout.setContentsMargins(15, 20, 15, 15)
+        
+        # 谱面文件选择
+        osu_file_row = QtWidgets.QHBoxLayout()
+        osu_file_label = QtWidgets.QLabel("谱面文件:")
+        self.osu_file_path = QtWidgets.QLineEdit()
+        self.osu_file_path.setPlaceholderText("请选择.osu谱面文件...")
+        
+        browse_osu_btn = QtWidgets.QPushButton("浏览")
+        browse_osu_btn.clicked.connect(self.browse_osu_file)
+        
+        osu_file_row.addWidget(osu_file_label)
+        osu_file_row.addWidget(self.osu_file_path, 3)
+        osu_file_row.addWidget(browse_osu_btn)
+        
+        file_layout.addLayout(osu_file_row)
+        
+        # 输出设置
+        output_row = QtWidgets.QHBoxLayout()
+        output_label = QtWidgets.QLabel("输出文件:")
+        self.video_output_path = QtWidgets.QLineEdit()
+        self.video_output_path.setPlaceholderText("视频输出路径 (.mp4)...")
+        
+        browse_output_btn = QtWidgets.QPushButton("浏览")
+        browse_output_btn.clicked.connect(self.browse_video_output)
+        
+        output_row.addWidget(output_label)
+        output_row.addWidget(self.video_output_path, 3)
+        output_row.addWidget(browse_output_btn)
+        
+        file_layout.addLayout(output_row)
+        
+        main_layout.addWidget(file_group)
+        
+        # 视频设置组
+        video_settings_group = QtWidgets.QGroupBox("视频设置")
+        video_settings_group.setStyleSheet("""
+            QGroupBox {
+                font-weight: bold;
+                border: 1px solid #ddd;
+                border-radius: 5px;
+                margin-top: 15px;
+                padding-top: 16px;
+            }
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                subcontrol-position: top center;
+                color: white;
+                background-color: #FF66AA;
+                padding: 2px 15px;
+                border-radius: 3px;
+            }
+        """)
+        video_settings_layout = QtWidgets.QVBoxLayout(video_settings_group)
+        video_settings_layout.setContentsMargins(15, 20, 15, 15)
+        
+        # FPS设置
+        fps_row = QtWidgets.QHBoxLayout()
+        fps_label = QtWidgets.QLabel("帧率(FPS):")
+        self.fps_spinbox = QtWidgets.QSpinBox()
+        self.fps_spinbox.setRange(30, 120)
+        self.fps_spinbox.setValue(60)
+        self.fps_spinbox.setSingleStep(10)
+        
+        fps_row.addWidget(fps_label)
+        fps_row.addWidget(self.fps_spinbox)
+        fps_row.addStretch(1)
+        
+        video_settings_layout.addLayout(fps_row)
+        
+        # 滚动速度设置
+        speed_row = QtWidgets.QHBoxLayout()
+        speed_label = QtWidgets.QLabel("滚动速度:")
+        self.scroll_speed_slider = QtWidgets.QSlider(QtCore.Qt.Horizontal)
+        self.scroll_speed_slider.setRange(500, 2000)
+        self.scroll_speed_slider.setValue(1000)
+        self.scroll_speed_slider.setTickPosition(QtWidgets.QSlider.TicksBelow)
+        self.scroll_speed_slider.setTickInterval(100)
+        self.scroll_speed_value = QtWidgets.QLabel("1000")
+        
+        speed_row.addWidget(speed_label)
+        speed_row.addWidget(self.scroll_speed_slider, 3)
+        speed_row.addWidget(self.scroll_speed_value)
+        
+        # 连接滑动条的信号
+        self.scroll_speed_slider.valueChanged.connect(lambda v: self.scroll_speed_value.setText(str(v)))
+        
+        video_settings_layout.addLayout(speed_row)
+        
+        main_layout.addWidget(video_settings_group)
+        
+        # 预览区域
+        preview_group = QtWidgets.QGroupBox("预览")
+        preview_group.setStyleSheet("""
+            QGroupBox {
+                font-weight: bold;
+                border: 1px solid #ddd;
+                border-radius: 5px;
+                margin-top: 15px;
+                padding-top: 16px;
+            }
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                subcontrol-position: top center;
+                color: white;
+                background-color: #FF66AA;
+                padding: 2px 15px;
+                border-radius: 3px;
+            }
+        """)
+        preview_layout = QtWidgets.QVBoxLayout(preview_group)
+        preview_layout.setContentsMargins(15, 20, 15, 15)
+        
+        # 预览标签
+        self.video_preview_label = QtWidgets.QLabel("选择谱面文件后可预览")
+        self.video_preview_label.setAlignment(QtCore.Qt.AlignCenter)
+        self.video_preview_label.setStyleSheet("""
+            font-size: 16px;
+            color: #666666;
+            background-color: #EEEEEE;
+            border: 1px dashed #CCCCCC;
+            min-height: 200px;
+        """)
+        
+        preview_layout.addWidget(self.video_preview_label)
+        
+        main_layout.addWidget(preview_group)
+        
+        # 底部按钮区域
+        buttons_layout = QtWidgets.QHBoxLayout()
+        buttons_layout.addStretch(1)
+        
+        # 预览按钮
+        self.video_preview_btn = QtWidgets.QPushButton("谱面预览")
+        self.video_preview_btn.setMinimumWidth(150)
+        self.video_preview_btn.setMinimumHeight(30)
+        self.video_preview_btn.clicked.connect(self.preview_video)
+        self.video_preview_btn.setEnabled(False)
+        
+        # 生成按钮
+        self.generate_video_btn = QtWidgets.QPushButton("生成视频")
+        self.generate_video_btn.setMinimumWidth(150)
+        self.generate_video_btn.setMinimumHeight(30)
+        self.generate_video_btn.setStyleSheet("""
+            QPushButton { 
+                background-color: #FF66AA; 
+                color: white; 
+                font-weight: bold;
+            }
+            QPushButton:hover { 
+                background-color: #FF77BB; 
+            }
+            QPushButton:pressed { 
+                background-color: #DD4488; 
+            }
+            QPushButton:disabled {
+                background-color: #cccccc;
+                color: #888888;
+            }
+        """)
+        self.generate_video_btn.clicked.connect(self.generate_video)
+        self.generate_video_btn.setEnabled(False)
+        
+        buttons_layout.addWidget(self.video_preview_btn)
+        buttons_layout.addWidget(self.generate_video_btn)
+        buttons_layout.addStretch(1)
+        
+        main_layout.addLayout(buttons_layout)
+        
+        # 状态区域
+        status_layout = QtWidgets.QHBoxLayout()
+        
+        self.video_gen_status = QtWidgets.QLabel("就绪")
+        self.video_gen_status.setStyleSheet("color: #666666;")
+        
+        self.video_gen_progress = QtWidgets.QProgressBar()
+        self.video_gen_progress.setValue(0)
+        
+        status_layout.addWidget(self.video_gen_status, 1)
+        status_layout.addWidget(self.video_gen_progress, 2)
+        
+        main_layout.addLayout(status_layout)
+        
+        # 设置滚动区域的内容并添加到主布局
+        scroll_area.setWidget(scroll_content)
+        
+        # 创建主布局
+        layout = QtWidgets.QVBoxLayout(tab)
+        layout.addWidget(scroll_area)
+        
+        # 检查视频生成模块是否可用
+        if not VIDEO_GEN_AVAILABLE:
+            error_label = QtWidgets.QLabel("视频生成模块不可用，请检查依赖项安装。")
+            error_label.setStyleSheet("""
+                color: red;
+                font-weight: bold;
+                padding: 10px;
+                background-color: #FFEEEE;
+                border: 1px solid red;
+                border-radius: 5px;
+            """)
+            main_layout.insertWidget(0, error_label)
     
     def browse_audio(self):
         """浏览并选择音频文件"""
@@ -5196,12 +5447,13 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
 
     def preview_subtitle(self):
         """预览处理后的字幕文件"""
-        output_path = self.output_subtitle_path.text()
+        input_file = self.input_subtitle_path.text()
+        output_file = self.output_subtitle_path.text()
         
-        if not output_path or not os.path.exists(output_path):
-            QtWidgets.QMessageBox.warning(self, "文件不存在", "输出字幕文件不存在，请先处理字幕")
+        if not output_file or not os.path.exists(output_file):
+            QtWidgets.QMessageBox.warning(self, "错误", "输出字幕文件不存在，请先处理字幕")
             return
-        
+            
         # 使用系统默认程序打开字幕文件
         try:
             import subprocess
@@ -5209,13 +5461,212 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
             
             system = platform.system()
             if system == 'Windows':
-                os.startfile(output_path)
+                os.startfile(output_file)
             elif system == 'Darwin':  # macOS
-                subprocess.call(['open', output_path])
+                subprocess.call(('open', output_file))
             else:  # Linux
-                subprocess.call(['xdg-open', output_path])
+                subprocess.call(('xdg-open', output_file))
         except Exception as e:
-            QtWidgets.QMessageBox.warning(self, "打开失败", f"无法打开字幕文件: {str(e)}")
+            QtWidgets.QMessageBox.warning(self, "预览失败", f"无法打开字幕文件: {str(e)}")
+
+    def browse_osu_file(self):
+        """浏览并选择osu谱面文件"""
+        file_dialog = QtWidgets.QFileDialog()
+        file_path, _ = file_dialog.getOpenFileName(
+            self, "选择谱面文件", "", "osu谱面文件 (*.osu)"
+        )
+        
+        if file_path:
+            self.osu_file_path.setText(file_path)
+            
+            # 设置默认输出路径
+            output_path = os.path.splitext(file_path)[0] + "_1k.mp4"
+            self.video_output_path.setText(output_path)
+            
+            # 启用相关按钮
+            self.video_preview_btn.setEnabled(True)
+            self.generate_video_btn.setEnabled(True)
+            
+            # 更新状态
+            self.video_gen_status.setText("已选择谱面文件，可以生成视频")
+
+    def browse_video_output(self):
+        """浏览并选择视频输出路径"""
+        file_dialog = QtWidgets.QFileDialog()
+        file_path, _ = file_dialog.getSaveFileName(
+            self, "选择输出文件", "", "MP4视频文件 (*.mp4)"
+        )
+        
+        if file_path:
+            # 确保有.mp4扩展名
+            if not file_path.lower().endswith('.mp4'):
+                file_path += '.mp4'
+                
+            self.video_output_path.setText(file_path)
+
+    def preview_video(self):
+        """预览谱面文件内容"""
+        osu_path = self.osu_file_path.text()
+        
+        if not osu_path or not os.path.exists(osu_path):
+            QtWidgets.QMessageBox.warning(self, "错误", "请选择有效的osu谱面文件")
+            return
+            
+        try:
+            # 解析谱面文件
+            parser = OsuParser(osu_path)
+            hits = parser.get_hits_for_1k()
+            
+            # 获取基本信息
+            info_text = f"谱面信息:\n"
+            info_text += f"音频文件: {parser.audio_filename}\n"
+            info_text += f"总音符数: {len(hits)}\n"
+            
+            # 分析音符类型
+            tap_count = sum(1 for h in hits if h["type"] == "tap")
+            hold_count = sum(1 for h in hits if h["type"] == "hold")
+            info_text += f"Tap音符: {tap_count}\n"
+            info_text += f"Hold音符: {hold_count}\n"
+            
+            # 计算持续时间
+            if hits:
+                first_note_time = min(h["time"] for h in hits)
+                last_note_time = max(h["end_time"] if "end_time" in h else h["time"] for h in hits)
+                duration_ms = last_note_time - first_note_time
+                duration_sec = duration_ms / 1000
+                info_text += f"谱面长度: {int(duration_sec//60)}:{int(duration_sec%60):02d}\n"
+            
+            # 显示预览信息
+            self.video_preview_label.setText(info_text)
+            self.video_preview_label.setAlignment(QtCore.Qt.AlignLeft | QtCore.Qt.AlignTop)
+            self.video_preview_label.setStyleSheet("""
+                font-size: 14px;
+                color: #333333;
+                background-color: #FFFFFF;
+                border: 1px solid #CCCCCC;
+                padding: 10px;
+                text-align: left;
+            """)
+            
+        except Exception as e:
+            QtWidgets.QMessageBox.warning(self, "预览失败", f"无法解析谱面文件: {str(e)}")
+            self.video_preview_label.setText(f"预览失败: {str(e)}")
+
+    def generate_video(self):
+        """生成音游视频"""
+        osu_path = self.osu_file_path.text()
+        output_path = self.video_output_path.text()
+        
+        if not osu_path or not os.path.exists(osu_path):
+            QtWidgets.QMessageBox.warning(self, "错误", "请选择有效的osu谱面文件")
+            return
+            
+        if not output_path:
+            QtWidgets.QMessageBox.warning(self, "错误", "请指定输出视频文件路径")
+            return
+            
+        # 获取设置
+        fps = self.fps_spinbox.value()
+        scroll_speed = int(self.scroll_speed_slider.value())
+        
+        # 更新状态
+        self.video_gen_status.setText("正在生成视频...")
+        self.video_gen_progress.setValue(10)
+        
+        # 禁用按钮
+        self.video_preview_btn.setEnabled(False)
+        self.generate_video_btn.setEnabled(False)
+        
+        try:
+            # 在单独的线程中创建视频
+            import threading
+            
+            def video_generation_task():
+                try:
+                    # 调用视频生成函数
+                    create_vsrg_video(osu_path, output_path, fps=fps, scroll_speed=scroll_speed)
+                    
+                    # 完成后在主线程中更新UI
+                    QtCore.QMetaObject.invokeMethod(
+                        self, 
+                        "handle_video_generation_complete", 
+                        QtCore.Qt.QueuedConnection,
+                        QtCore.Q_ARG(str, output_path)
+                    )
+                except Exception as e:
+                    # 出错时在主线程中显示错误
+                    QtCore.QMetaObject.invokeMethod(
+                        self, 
+                        "handle_video_generation_error", 
+                        QtCore.Qt.QueuedConnection,
+                        QtCore.Q_ARG(str, str(e))
+                    )
+            
+            # 启动线程
+            thread = threading.Thread(target=video_generation_task)
+            thread.daemon = True
+            thread.start()
+            
+        except Exception as e:
+            self.video_gen_status.setText(f"生成失败: {str(e)}")
+            self.video_gen_progress.setValue(0)
+            self.video_preview_btn.setEnabled(True)
+            self.generate_video_btn.setEnabled(True)
+            QtWidgets.QMessageBox.critical(self, "错误", f"视频生成失败: {str(e)}")
+
+    @QtCore.pyqtSlot(str)
+    def handle_video_generation_complete(self, output_path):
+        """处理视频生成完成事件"""
+        self.video_gen_status.setText("视频生成完成!")
+        self.video_gen_progress.setValue(100)
+        
+        # 重新启用按钮
+        self.video_preview_btn.setEnabled(True)
+        self.generate_video_btn.setEnabled(True)
+        
+        # 弹出成功消息
+        QtWidgets.QMessageBox.information(
+            self, 
+            "生成完成", 
+            f"视频已生成: {output_path}"
+        )
+        
+        # 询问是否打开视频
+        reply = QtWidgets.QMessageBox.question(
+            self,
+            "打开视频",
+            "是否立即打开生成的视频?",
+            QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No,
+            QtWidgets.QMessageBox.Yes
+        )
+        
+        if reply == QtWidgets.QMessageBox.Yes:
+            try:
+                import subprocess
+                import platform
+                
+                system = platform.system()
+                if system == 'Windows':
+                    os.startfile(output_path)
+                elif system == 'Darwin':  # macOS
+                    subprocess.call(('open', output_path))
+                else:  # Linux
+                    subprocess.call(('xdg-open', output_path))
+            except Exception as e:
+                QtWidgets.QMessageBox.warning(self, "打开失败", f"无法打开视频文件: {str(e)}")
+
+    @QtCore.pyqtSlot(str)
+    def handle_video_generation_error(self, error_message):
+        """处理视频生成错误事件"""
+        self.video_gen_status.setText(f"生成失败: {error_message}")
+        self.video_gen_progress.setValue(0)
+        
+        # 重新启用按钮
+        self.video_preview_btn.setEnabled(True)
+        self.generate_video_btn.setEnabled(True)
+        
+        # 显示错误消息
+        QtWidgets.QMessageBox.critical(self, "错误", f"视频生成失败: {error_message}")
 
 def main():
     """程序入口函数"""
