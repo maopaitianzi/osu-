@@ -117,11 +117,12 @@ class OsuParser:
         return hits
 
 class VSRGRenderer:
-    def __init__(self, width=800, height=600, fps=60, lane_width=100):
-        self.width = width
+    def __init__(self, width=800, height=600, fps=60, lane_width=200):
+        # 设置宽度等于轨道宽度
+        self.lane_width = lane_width
+        self.width = lane_width
         self.height = height
         self.fps = fps
-        self.lane_width = lane_width
         self.receptors_y = self.height - 100  # 接收点的Y坐标
         self.bg_color = (50, 50, 50)  # 灰色背景
         
@@ -129,7 +130,7 @@ class VSRGRenderer:
         pygame.init()
         self.surface = pygame.Surface((self.width, self.height))
         
-        # 单键模式的X坐标
+        # 单键模式的X坐标 - 居中
         self.lane_x = self.width // 2
     
     def render_frame(self, t, hits, scroll_speed=1000):
@@ -142,13 +143,13 @@ class VSRGRenderer:
         pygame.draw.rect(self.surface, (200, 200, 200), 
                          (self.lane_x - receptor_width/2, self.receptors_y, receptor_width, 10))
         
-        # 绘制分隔线
+        # 绘制分隔线 - 轨道边界
         pygame.draw.line(self.surface, (100, 100, 100), 
-                         (self.lane_x - self.lane_width/2, 0), 
-                         (self.lane_x - self.lane_width/2, self.height), 2)
+                         (0, 0), 
+                         (0, self.height), 2)
         pygame.draw.line(self.surface, (100, 100, 100), 
-                         (self.lane_x + self.lane_width/2, 0), 
-                         (self.lane_x + self.lane_width/2, self.height), 2)
+                         (self.width-1, 0), 
+                         (self.width-1, self.height), 2)
         
         # 计算当前时间毫秒
         t_ms = t * 1000
@@ -199,7 +200,7 @@ class VSRGRenderer:
         # 转置以符合MoviePy格式要求
         return frame.transpose(1, 0, 2)
 
-def create_vsrg_video(osu_file, output_file, fps=60, scroll_speed=1000):
+def create_vsrg_video(osu_file, output_file, fps=60, scroll_speed=1000, lane_width=200):
     """创建VSRG视频"""
     # 解析osu文件
     parser = OsuParser(osu_file)
@@ -209,7 +210,7 @@ def create_vsrg_video(osu_file, output_file, fps=60, scroll_speed=1000):
     audio_path = os.path.join(os.path.dirname(osu_file), parser.audio_filename)
     
     # 创建渲染器
-    renderer = VSRGRenderer(fps=fps)
+    renderer = VSRGRenderer(fps=fps, lane_width=lane_width)
     
     # 计算视频时长（毫秒）
     duration_ms = max([hit["end_time"] if "end_time" in hit else hit["time"] for hit in hits]) + 3000

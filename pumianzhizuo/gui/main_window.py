@@ -2256,9 +2256,9 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
         
         # 输出设置
         output_row = QtWidgets.QHBoxLayout()
-        output_label = QtWidgets.QLabel("输出文件:")
+        output_label = QtWidgets.QLabel("输出目录:")
         self.video_output_path = QtWidgets.QLineEdit()
-        self.video_output_path.setPlaceholderText("视频输出路径 (.mp4)...")
+        self.video_output_path.setPlaceholderText("视频输出目录...")
         
         browse_output_btn = QtWidgets.QPushButton("浏览")
         browse_output_btn.clicked.connect(self.browse_video_output)
@@ -2325,6 +2325,21 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
         self.scroll_speed_slider.valueChanged.connect(lambda v: self.scroll_speed_value.setText(str(v)))
         
         video_settings_layout.addLayout(speed_row)
+        
+        # 轨道宽度设置
+        lane_width_row = QtWidgets.QHBoxLayout()
+        lane_width_label = QtWidgets.QLabel("轨道宽度:")
+        self.lane_width_spinbox = QtWidgets.QSpinBox()
+        self.lane_width_spinbox.setRange(100, 500)
+        self.lane_width_spinbox.setValue(200)
+        self.lane_width_spinbox.setSingleStep(10)
+        self.lane_width_spinbox.setSuffix(" px")
+        
+        lane_width_row.addWidget(lane_width_label)
+        lane_width_row.addWidget(self.lane_width_spinbox)
+        lane_width_row.addStretch(1)
+        
+        video_settings_layout.addLayout(lane_width_row)
         
         main_layout.addWidget(video_settings_group)
         
@@ -5479,10 +5494,6 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
         if file_path:
             self.osu_file_path.setText(file_path)
             
-            # 设置默认输出路径
-            output_path = os.path.splitext(file_path)[0] + "_1k.mp4"
-            self.video_output_path.setText(output_path)
-            
             # 启用相关按钮
             self.video_preview_btn.setEnabled(True)
             self.generate_video_btn.setEnabled(True)
@@ -5491,18 +5502,14 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
             self.video_gen_status.setText("已选择谱面文件，可以生成视频")
 
     def browse_video_output(self):
-        """浏览并选择视频输出路径"""
+        """浏览并选择视频输出目录"""
         file_dialog = QtWidgets.QFileDialog()
-        file_path, _ = file_dialog.getSaveFileName(
-            self, "选择输出文件", "", "MP4视频文件 (*.mp4)"
+        directory = file_dialog.getExistingDirectory(
+            self, "选择输出目录", ""
         )
         
-        if file_path:
-            # 确保有.mp4扩展名
-            if not file_path.lower().endswith('.mp4'):
-                file_path += '.mp4'
-                
-            self.video_output_path.setText(file_path)
+        if directory:
+            self.video_output_path.setText(directory)
 
     def preview_video(self):
         """预览谱面文件内容"""
@@ -5555,16 +5562,25 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
     def generate_video(self):
         """生成音游视频"""
         osu_path = self.osu_file_path.text()
-        output_path = self.video_output_path.text()
+        output_dir = self.video_output_path.text()
         
         if not osu_path or not os.path.exists(osu_path):
             QtWidgets.QMessageBox.warning(self, "错误", "请选择有效的osu谱面文件")
             return
             
-        if not output_path:
-            QtWidgets.QMessageBox.warning(self, "错误", "请指定输出视频文件路径")
+        if not output_dir:
+            QtWidgets.QMessageBox.warning(self, "错误", "请指定输出视频目录")
             return
             
+        if not os.path.isdir(output_dir):
+            QtWidgets.QMessageBox.warning(self, "错误", "指定的输出路径不是一个有效的目录")
+            return
+            
+        # 构建输出文件路径
+        osu_filename = os.path.basename(osu_path)
+        osu_basename = os.path.splitext(osu_filename)[0]
+        output_path = os.path.join(output_dir, f"{osu_basename}_1k.mp4")
+        
         # 获取设置
         fps = self.fps_spinbox.value()
         scroll_speed = int(self.scroll_speed_slider.value())
@@ -5584,7 +5600,8 @@ class OsuStyleMainWindow(QtWidgets.QMainWindow):
             def video_generation_task():
                 try:
                     # 调用视频生成函数
-                    create_vsrg_video(osu_path, output_path, fps=fps, scroll_speed=scroll_speed)
+                    lane_width = self.lane_width_spinbox.value()
+                    create_vsrg_video(osu_path, output_path, fps=fps, scroll_speed=scroll_speed, lane_width=lane_width)
                     
                     # 完成后在主线程中更新UI
                     QtCore.QMetaObject.invokeMethod(
